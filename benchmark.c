@@ -15,9 +15,9 @@ int minimum = 32, maximum = 401, step = 92;
 //int minimum = 400, maximum = 1201, step = 200;
 
 
-//==============================================================================
-//========================DO NOT MODIFY ANYTHING BEYOND THIS POINT==============
-//==============================================================================
+//=============================================================================================
+//========================DO NOT MODIFY ANYTHING BEYOND THIS POINT=============================
+//=============================================================================================
 
 // Reference function to be compared with your code.
 int reference(float* in, float* out, int data_size_X, int data_size_Y,
@@ -123,6 +123,8 @@ int main( int argc, char ** argv ) {
         // Subtract out the difference to figure out how large it is. If the difference is large enough, then error out.
         for ( int i = 0; i < x * y; i++ ) {
           float temp = out_image[i] - out_ref_image[i];
+//        if (counter ==0 && x == minimum && y == minimum)
+//          printf("Ref: %f, Out: %f\n", out_ref_image[i], out_image[i]);
           if ( temp * temp > 0.0001 ) {
             printf( "FAILURE: error in convolution calculation exceeds an acceptable margin.\n" );
             printf( "Expected: %f, received: %f, with image size x = %d, y = %d at array location: %d\n", out_ref_image[i], out_image[i], x, y, i );
@@ -164,6 +166,10 @@ int main( int argc, char ** argv ) {
   if (real_image) {
     unsigned char data[size*color_size];
     float out_image1[size], out_image2[size];
+    memset( out_image, 0, sizeof(float) * size );
+    memset( out_image1, 0, sizeof(float) * size );
+    memset( out_image2, 0, sizeof(float) * size );
+    conv2D( in_image, out_image, x_dim, y_dim, kernel ); 
     if (color_size > 1) {
       conv2D( in_image1, out_image1, x_dim, y_dim, kernel); 
       conv2D( in_image2, out_image2, x_dim, y_dim, kernel); 
