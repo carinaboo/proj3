@@ -1,14 +1,91 @@
 #include <emmintrin.h>
+#include <string.h>
+#include <stdio.h>
+// string.h for memset
 #define KERNX 3 //this is the x-size of the kernel. It will always be odd.
 #define KERNY 3 //this is the y-size of the kernel. It will always be odd.
+
+typedef struct {
+    int width;
+    int height;
+    float *array;
+} array2d;
+
+// add some number of zeros as padding around a given strided-array
+// for a 3x3 kernel, the pad_size should be one
+// in general pad_size = max((KERNX - 1)/2, (KERNY - 1)/2);
+// note that we'll need to free whatever memory is in *padded elsewhere!
+array2d zeroPad(array2d in, int pad_size) {
+    array2d retval;
+    int pad_x = in.width + pad_size*2;
+    int pad_y = in.height + pad_size*2;
+
+    size_t p_arr_size = pad_x*pad_y*sizeof(float);
+    size_t line_size = in.width*sizeof(float);
+
+    float *padded = malloc(p_arr_size);
+
+    // zero out the whole dingus
+    memset(padded, 0, p_arr_size);
+
+    // copy the original data into the zero-padded array
+    for (int i = in.height-1; i != -1; i--) {
+        memcpy(padded + pad_x*(i+1) + pad_size, in.array + i*in.width, line_size);
+    }
+
+    retval.array = padded;
+    retval.width = pad_x;
+    retval.height = pad_y;
+
+    return retval;
+}
+
+// tool for debugging zeroPad
+void printArray(array2d array) {
+    for (int y = 0; y < array.height; y++) {
+        for (int x = 0; x < array.width; x++) {
+            printf("%f, ", array.array[x + y*array.width]);
+        }
+        printf("\n");
+    }
+}
+
 
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
 {
+
+    float test_data[9] = {1,2,3,4,5,6,7,8,9,};
+    array2d test;
+    test.array = test_data;
+    test.width = 3;
+    test.height = 3;
+
+    // first print in2d
+    printArray(test);
+
+    // now get a copy with padding
+    array2d padded = zeroPad(test, 1);
+
+    // and print that
+    printArray(padded);
+
+    // just for testing for now !!!
+    return 1;
+
+    size_t float_size = sizeof(float);
     // the x coordinate of the kernel's center
     int kern_cent_X = (KERNX - 1)/2;
     // the y coordinate of the kernel's center
     int kern_cent_Y = (KERNY - 1)/2;
+
+    // padded array
+    int padded_count = (data_size_X+2)*(data_size_Y+2);
+    float p[padded_count];
+    // initialize it all to zero
+    // memset(ptr, 0, number of bytes);
+    memset(p, 0, padded_count*float_size);
+
 
     /* assuming KERNX = 3 and KERNY = 3,
      * we can create something defined in KERNX and KERNY using C preprocessor
