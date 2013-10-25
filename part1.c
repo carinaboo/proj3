@@ -150,14 +150,15 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     in_2d.height = data_size_Y;
     array2d pad_2d = zeroPad(in_2d, 1);
     float* padded = pad_2d.array;
+    int pad_width = pad_2d.width;
 
 
     // accumulator so we don't access deep array memory every multiply.
     float cur_sum = 0;
     
     // main convolution loop
-	for(int x = 1; x < data_size_X+1; x++){ // the x coordinate of the output location we're focusing on
-		for(int y = 1; y < data_size_Y+1; y++){ // the y coordinate of theoutput location we're focusing on
+    for(int y = 1; y < data_size_Y+1; y++){ // the y coordinate of theoutput location we're focusing on
+        for(int x = 1; x < data_size_X+1; x++){ // the x coordinate of the output location we're focusing on
             // re-initialize sum
             cur_sum = 0;
 
@@ -165,17 +166,17 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
             // because it's a lot of if statements
             // also note that the kernel is NOT flipped -- woo doing intuitive things
 
-            cur_sum += padded[x   + (y-1) * pad_2d.width] * k_a1;
-            cur_sum += padded[x   + (y  ) * pad_2d.width] * k_b1;
-            cur_sum += padded[x   + (y+1) * pad_2d.width] * k_c1;
+            cur_sum += padded[x   + (y-1) * pad_width] * k_a1;
+            cur_sum += padded[x   + (y  ) * pad_width] * k_b1;
+            cur_sum += padded[x   + (y+1) * pad_width] * k_c1;
 
-            cur_sum += padded[x-1 + (y-1) * pad_2d.width] * k_a0;
-            cur_sum += padded[x-1 + (y  ) * pad_2d.width] * k_b0;
-            cur_sum += padded[x-1 + (y+1) * pad_2d.width] * k_c0;
+            cur_sum += padded[x-1 + (y-1) * pad_width] * k_a0;
+            cur_sum += padded[x-1 + (y  ) * pad_width] * k_b0;
+            cur_sum += padded[x-1 + (y+1) * pad_width] * k_c0;
 
-            cur_sum += padded[x+1 + (y-1) * pad_2d.width] * k_a2;
-            cur_sum += padded[x+1 + (y  ) * pad_2d.width] * k_b2;
-            cur_sum += padded[x+1 + (y+1) * pad_2d.width] * k_c2;
+            cur_sum += padded[x+1 + (y-1) * pad_width] * k_a2;
+            cur_sum += padded[x+1 + (y  ) * pad_width] * k_b2;
+            cur_sum += padded[x+1 + (y+1) * pad_width] * k_c2;
 
 
             // store into out matrix
