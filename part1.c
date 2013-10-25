@@ -30,7 +30,11 @@ array2d zeroPad(array2d in, int pad_size) {
 
     // copy the original data into the zero-padded array
     for (int i = in.height-1; i != -1; i--) {
-        memcpy(padded + pad_x*(i+1) + pad_size, in.array + i*in.width, line_size);
+        //     0,0      y                   x         
+        memcpy(padded + pad_x*(i+pad_size) + pad_size,
+                // 0,y
+                in.array + i*in.width, 
+                line_size);
     }
 
     retval.array = padded;
@@ -39,6 +43,22 @@ array2d zeroPad(array2d in, int pad_size) {
 
     return retval;
 }
+
+// unpads padded.array by pad_size from all size
+// writes result into out.array (which should be *out from 
+// conv2d :)
+void unPad(array2d padded, array2d out, int pad_size) {
+    // copy data out of the zero-padded array
+    float *src = padded.array;
+    float *dst = out.array;
+    size_t line_size = out.width*sizeof(float);
+    for (int i = out.height-1; i != -1; i--) {
+        memcpy(dst + i*out.width,
+               src + padded.width*(i+pad_size) + pad_size,
+               line_size);
+    }
+}
+
 
 // tool for debugging zeroPad
 void printArray(array2d array) {
@@ -50,28 +70,45 @@ void printArray(array2d array) {
     }
 }
 
+// test the above functions on arrays
+void test_array2d(int pad_size) {
+    float data[9] = {1,2,3,4,5,6,7,8,9};
+    float res[9];
+    array2d padded;
+    array2d out;
+    array2d test;
+
+    test.array = data;
+    test.width = 3;
+    test.height = 3;
+
+    out.array = res;
+    out.width = 3;
+    out.height = 3;
+
+
+    printf("Original data\n");
+    printArray(test);
+
+    printf("Padded with %i 0s on each side\n", pad_size);
+    padded = zeroPad(test, pad_size);
+    printArray(padded);
+
+    printf("Padding removed!\n");
+    unPad(padded, out, pad_size);
+    printArray(out);
+}
 
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
 {
 
-    float test_data[9] = {1,2,3,4,5,6,7,8,9,};
-    array2d test;
-    test.array = test_data;
-    test.width = 3;
-    test.height = 3;
-
-    // first print in2d
-    printArray(test);
-
-    // now get a copy with padding
-    array2d padded = zeroPad(test, 1);
-
-    // and print that
-    printArray(padded);
-
-    // just for testing for now !!!
+    // skip all this noise and just test for now
+    test_array2d(1);
+    test_array2d(2);
+    test_array2d(3);
     return 1;
+
 
     size_t float_size = sizeof(float);
     // the x coordinate of the kernel's center
