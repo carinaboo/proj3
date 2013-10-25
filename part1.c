@@ -59,20 +59,20 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
             // also note that the kernel is NOT flipped -- woo doing intuitive things
 
             // first row, one above the center
-            if (y-1 > -1) {
-                if (x-1 > -1) cur_sum += in[x-1 + (y-1) * data_size_X] * k_a0;
+            if (y != 0) {
+                if (x != 0)   cur_sum += in[x-1 + (y-1) * data_size_X] * k_a0;
                               cur_sum += in[x   + (y-1) * data_size_X] * k_a1;
                 if (x+1 < dX) cur_sum += in[x+1 + (y-1) * data_size_X] * k_a2;
             }
 
             // center row
-            if (x-1 > -1) cur_sum += in[x-1 + (y  ) * data_size_X] * k_b0;
+            if (x != 0)   cur_sum += in[x-1 + (y  ) * data_size_X] * k_b0;
                           cur_sum += in[x   + (y  ) * data_size_X] * k_b1;
             if (x+1 < dX) cur_sum += in[x+1 + (y  ) * data_size_X] * k_b2;
 
             // bottom row
             if (y+1 < dY) {
-                if (x-1 > -1) cur_sum += in[x-1 + (y+1) * data_size_X] * k_c0;
+                if (x != 0)   cur_sum += in[x-1 + (y+1) * data_size_X] * k_c0;
                               cur_sum += in[x   + (y+1) * data_size_X] * k_c1;
                 if (x+1 < dX) cur_sum += in[x+1 + (y+1) * data_size_X] * k_c2;
             }
