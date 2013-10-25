@@ -125,12 +125,11 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
      *    ----------
      */
 
+    // register-blocking the kernel got us like ~2.5gflops
+    // along with regoster-blocking the current sum
     float k_a0, k_a1, k_a2, 
           k_b0, k_b1, k_b2,
           k_c0, k_c1, k_c2;
-
-    int dX = data_size_X;
-    int dY = data_size_Y;
 
     // kernel un-flipped because why would you do that to me
     k_a0 = *(kernel + 2 + 2*KERNX);
@@ -144,6 +143,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     k_c2 = *(kernel + 0 + 0*KERNX);
 
     // pad the array with a ring of zeroes so we don't have to stress about dis shiz
+    // using padding instead of ifs all over the place got us like ~1.5gflops
     array2d in_2d;
     in_2d.array = in;
     in_2d.width = data_size_X;
@@ -155,28 +155,36 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
 
     // accumulator so we don't access deep array memory every multiply.
     float cur_sum = 0;
+
+    int ya, yb, yc; // y-1*width, y*width, y+1*width
     
     // main convolution loop
+    // reording y before x got us 4gflops
     for(int y = 1; y < data_size_Y+1; y++){ // the y coordinate of theoutput location we're focusing on
         for(int x = 1; x < data_size_X+1; x++){ // the x coordinate of the output location we're focusing on
             // re-initialize sum
             cur_sum = 0;
 
+            // maybe register blocking these will speed things up?
+            // it didn't
+            ya = (y-1) * pad_width;
+            yb = y * pad_width;
+            yc = (y+1) * pad_width;
+
             // for now i'm not handling top/bottom/left/right errors
             // because it's a lot of if statements
             // also note that the kernel is NOT flipped -- woo doing intuitive things
+            cur_sum += padded[x-1 + ya] * k_a0;
+            cur_sum += padded[x   + ya] * k_a1;
+            cur_sum += padded[x+1 + ya] * k_a2;
 
-            cur_sum += padded[x   + (y-1) * pad_width] * k_a1;
-            cur_sum += padded[x   + (y  ) * pad_width] * k_b1;
-            cur_sum += padded[x   + (y+1) * pad_width] * k_c1;
+            cur_sum += padded[x-1 + yb] * k_b0;
+            cur_sum += padded[x   + yb] * k_b1;
+            cur_sum += padded[x+1 + yb] * k_b2;
 
-            cur_sum += padded[x-1 + (y-1) * pad_width] * k_a0;
-            cur_sum += padded[x-1 + (y  ) * pad_width] * k_b0;
-            cur_sum += padded[x-1 + (y+1) * pad_width] * k_c0;
-
-            cur_sum += padded[x+1 + (y-1) * pad_width] * k_a2;
-            cur_sum += padded[x+1 + (y  ) * pad_width] * k_b2;
-            cur_sum += padded[x+1 + (y+1) * pad_width] * k_c2;
+            cur_sum += padded[x-1 + yc] * k_c0;
+            cur_sum += padded[x   + yc] * k_c1;
+            cur_sum += padded[x+1 + yc] * k_c2;
 
 
             // store into out matrix
