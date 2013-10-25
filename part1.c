@@ -102,27 +102,11 @@ void test_array2d(int pad_size) {
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
 {
-
-    // skip all this noise and just test for now
-    test_array2d(1);
-    test_array2d(2);
-    test_array2d(3);
-    return 1;
-
-
     size_t float_size = sizeof(float);
     // the x coordinate of the kernel's center
     int kern_cent_X = (KERNX - 1)/2;
     // the y coordinate of the kernel's center
     int kern_cent_Y = (KERNY - 1)/2;
-
-    // padded array
-    int padded_count = (data_size_X+2)*(data_size_Y+2);
-    float p[padded_count];
-    // initialize it all to zero
-    // memset(ptr, 0, number of bytes);
-    memset(p, 0, padded_count*float_size);
-
 
     /* assuming KERNX = 3 and KERNY = 3,
      * we can create something defined in KERNX and KERNY using C preprocessor
@@ -159,12 +143,21 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     k_c1 = *(kernel + 1 + 0*KERNX);
     k_c2 = *(kernel + 0 + 0*KERNX);
 
+    // pad the array with a ring of zeroes so we don't have to stress about dis shiz
+    array2d in_2d;
+    in_2d.array = in;
+    in_2d.width = data_size_X;
+    in_2d.height = data_size_Y;
+    array2d pad_2d = zeroPad(in_2d, 1);
+    float* padded = pad_2d.array;
+
+
     // accumulator so we don't access deep array memory every multiply.
     float cur_sum = 0;
     
     // main convolution loop
-	for(int x = 0; x < data_size_X; x++){ // the x coordinate of the output location we're focusing on
-		for(int y = 0; y < data_size_Y; y++){ // the y coordinate of theoutput location we're focusing on
+	for(int x = 1; x < data_size_X+1; x++){ // the x coordinate of the output location we're focusing on
+		for(int y = 1; y < data_size_Y+1; y++){ // the y coordinate of theoutput location we're focusing on
             // re-initialize sum
             cur_sum = 0;
 
@@ -172,27 +165,21 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
             // because it's a lot of if statements
             // also note that the kernel is NOT flipped -- woo doing intuitive things
 
-            // first row, one above the center
-            if (y != 0) {
-                if (x != 0)   cur_sum += in[x-1 + (y-1) * data_size_X] * k_a0;
-                              cur_sum += in[x   + (y-1) * data_size_X] * k_a1;
-                if (x+1 < dX) cur_sum += in[x+1 + (y-1) * data_size_X] * k_a2;
-            }
+            cur_sum += padded[x   + (y-1) * pad_2d.width] * k_a1;
+            cur_sum += padded[x   + (y  ) * pad_2d.width] * k_b1;
+            cur_sum += padded[x   + (y+1) * pad_2d.width] * k_c1;
 
-            // center row
-            if (x != 0)   cur_sum += in[x-1 + (y  ) * data_size_X] * k_b0;
-                          cur_sum += in[x   + (y  ) * data_size_X] * k_b1;
-            if (x+1 < dX) cur_sum += in[x+1 + (y  ) * data_size_X] * k_b2;
+            cur_sum += padded[x-1 + (y-1) * pad_2d.width] * k_a0;
+            cur_sum += padded[x-1 + (y  ) * pad_2d.width] * k_b0;
+            cur_sum += padded[x-1 + (y+1) * pad_2d.width] * k_c0;
 
-            // bottom row
-            if (y+1 < dY) {
-                if (x != 0)   cur_sum += in[x-1 + (y+1) * data_size_X] * k_c0;
-                              cur_sum += in[x   + (y+1) * data_size_X] * k_c1;
-                if (x+1 < dX) cur_sum += in[x+1 + (y+1) * data_size_X] * k_c2;
-            }
+            cur_sum += padded[x+1 + (y-1) * pad_2d.width] * k_a2;
+            cur_sum += padded[x+1 + (y  ) * pad_2d.width] * k_b2;
+            cur_sum += padded[x+1 + (y+1) * pad_2d.width] * k_c2;
+
 
             // store into out matrix
-            out[x+y*data_size_X] = cur_sum;
+            out[(x-1)+(y-1)*data_size_X] = cur_sum;
             /*
 			for(int i = -kern_cent_X; i <= kern_cent_X; i++){ // kernel unflipped x coordinate
 				for(int j = -kern_cent_Y; j <= kern_cent_Y; j++){ // kernel unflipped y coordinate
@@ -206,5 +193,8 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
 			}*/
 		}
 	}
+
+    // free the padded matrix
+    free(padded);
 	return 1;
 }
