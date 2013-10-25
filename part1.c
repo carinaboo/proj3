@@ -160,35 +160,35 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     
     // main convolution loop
     // reording y before x got us 4gflops
-    for(int y = 1; y < data_size_Y+1; y++){ // the y coordinate of theoutput location we're focusing on
-        for(int x = 1; x < data_size_X+1; x++){ // the x coordinate of the output location we're focusing on
+    for(int y = 0; y < data_size_Y; y++){ // the y coordinate of theoutput location we're focusing on
+        for(int x = 0; x < data_size_X; x++){ // the x coordinate of the output location we're focusing on
             // re-initialize sum
             cur_sum = 0;
 
             // maybe register blocking these will speed things up?
             // it didn't
-            ya = (y-1) * pad_width;
-            yb = y * pad_width;
-            yc = (y+1) * pad_width;
+            ya = (y) * pad_width;
+            yb = (y+1) * pad_width;
+            yc = (y+2) * pad_width;
 
             // for now i'm not handling top/bottom/left/right errors
             // because it's a lot of if statements
             // also note that the kernel is NOT flipped -- woo doing intuitive things
-            cur_sum += padded[x-1 + ya] * k_a0;
-            cur_sum += padded[x   + ya] * k_a1;
-            cur_sum += padded[x+1 + ya] * k_a2;
+            cur_sum += padded[x   + ya] * k_a0;
+            cur_sum += padded[x+1 + ya] * k_a1;
+            cur_sum += padded[x+2 + ya] * k_a2;
 
-            cur_sum += padded[x-1 + yb] * k_b0;
-            cur_sum += padded[x   + yb] * k_b1;
-            cur_sum += padded[x+1 + yb] * k_b2;
+            cur_sum += padded[x   + yb] * k_b0;
+            cur_sum += padded[x+1 + yb] * k_b1;
+            cur_sum += padded[x+2 + yb] * k_b2;
 
-            cur_sum += padded[x-1 + yc] * k_c0;
-            cur_sum += padded[x   + yc] * k_c1;
-            cur_sum += padded[x+1 + yc] * k_c2;
+            cur_sum += padded[x   + yc] * k_c0;
+            cur_sum += padded[x+1 + yc] * k_c1;
+            cur_sum += padded[x+2 + yc] * k_c2;
 
 
             // store into out matrix
-            out[(x-1)+(y-1)*data_size_X] = cur_sum;
+            out[x+y*data_size_X] = cur_sum;
             /*
 			for(int i = -kern_cent_X; i <= kern_cent_X; i++){ // kernel unflipped x coordinate
 				for(int j = -kern_cent_Y; j <= kern_cent_Y; j++){ // kernel unflipped y coordinate
