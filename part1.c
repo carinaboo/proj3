@@ -195,16 +195,16 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
 
             // current input block vectorized; last column of will be 0s when multiplied by kernel
             inv_a0 = _mm_loadu_ps(padded + x+0 + y*pad_width);
-            inv_b0 = _mm_loadu_ps(padded + x+0 + (y+1)*pad_width);
-            inv_c0 = _mm_loadu_ps(padded + x+0 + (y+2)*pad_width);
             inv_a1 = _mm_loadu_ps(padded + x+1 + y*pad_width);
-            inv_b1 = _mm_loadu_ps(padded + x+1 + (y+1)*pad_width);
-            inv_c1 = _mm_loadu_ps(padded + x+1 + (y+2)*pad_width);
             inv_a2 = _mm_loadu_ps(padded + x+2 + y*pad_width);
-            inv_b2 = _mm_loadu_ps(padded + x+2 + (y+1)*pad_width);
-            inv_c2 = _mm_loadu_ps(padded + x+2 + (y+2)*pad_width);
             inv_a3 = _mm_loadu_ps(padded + x+3 + y*pad_width);
+            inv_b0 = _mm_loadu_ps(padded + x+0 + (y+1)*pad_width);
+            inv_b1 = _mm_loadu_ps(padded + x+1 + (y+1)*pad_width);
+            inv_b2 = _mm_loadu_ps(padded + x+2 + (y+1)*pad_width);
             inv_b3 = _mm_loadu_ps(padded + x+3 + (y+1)*pad_width);
+            inv_c0 = _mm_loadu_ps(padded + x+0 + (y+2)*pad_width);
+            inv_c1 = _mm_loadu_ps(padded + x+1 + (y+2)*pad_width);
+            inv_c2 = _mm_loadu_ps(padded + x+2 + (y+2)*pad_width);
             inv_c3 = _mm_loadu_ps(padded + x+3 + (y+2)*pad_width);
 
             // multiply kernel with current input block
