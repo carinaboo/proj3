@@ -4,6 +4,7 @@
 // string.h for memset
 #define KERNX 3 //this is the x-size of the kernel. It will always be odd.
 #define KERNY 3 //this is the y-size of the kernel. It will always be odd.
+#define STRIDE 4 // gotta go fast
 
 typedef struct {
     int width;
@@ -163,43 +164,96 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     int pad_width = pad_2d.width;
 
 
-    // accumulator so we don't access deep array memory every multiply.
-    float cur_sum = 0;
+    // accumulators so we don't access deep array memory every multiply.
+    float cur_sum0 = 0;
+    float cur_sum1 = 0;
+    float cur_sum2 = 0;
+    float cur_sum3 = 0;
+    float sum_arr[16];
+
+    // vector registers that we will load in data
+    __m128 sum_v0, sum_v1, sum_v2, sum_v3, 
+           inv_a0, inv_a1, inv_a2, inv_a3, 
+           inv_b0, inv_b1, inv_b2, inv_b3, 
+           inv_c0, inv_c1, inv_c2, inv_c3;
 
     // int ya, yb, yc; // y-1*width, y*width, y+1*width
     
     // main convolution loop
     // reording y before x got us 4gflops
     for(int y = 0; y < data_size_Y; y++){ // the y coordinate of theoutput location we're focusing on
-        for(int x = 0; x < data_size_X; x++){ // the x coordinate of the output location we're focusing on
-            // re-initialize sum
-            cur_sum = 0;
-            __m128 sum_v = _mm_setzero_ps();
+        for(int x = 0; x < data_size_X/STRIDE*STRIDE; x+=STRIDE){ // the x coordinate of the output location we're focusing on
+            // STRIDING
+            cur_sum0 = 0;
+            cur_sum1 = 0;
+            cur_sum2 = 0;
+            cur_sum3 = 0;
+            sum_v0 = _mm_setzero_ps();
+            sum_v1 = _mm_setzero_ps();
+            sum_v2 = _mm_setzero_ps();
+            sum_v3 = _mm_setzero_ps();
 
             // current input block vectorized; last column of will be 0s when multiplied by kernel
-            __m128 inv_a = _mm_loadu_ps(padded + x + y*pad_width);
-            __m128 inv_b = _mm_loadu_ps(padded + x + (y+1)*pad_width);
-            __m128 inv_c = _mm_loadu_ps(padded + x + (y+2)*pad_width);
+            inv_a0 = _mm_loadu_ps(padded + x+0 + y*pad_width);
+            inv_b0 = _mm_loadu_ps(padded + x+0 + (y+1)*pad_width);
+            inv_c0 = _mm_loadu_ps(padded + x+0 + (y+2)*pad_width);
+            inv_a1 = _mm_loadu_ps(padded + x+1 + y*pad_width);
+            inv_b1 = _mm_loadu_ps(padded + x+1 + (y+1)*pad_width);
+            inv_c1 = _mm_loadu_ps(padded + x+1 + (y+2)*pad_width);
+            inv_a2 = _mm_loadu_ps(padded + x+2 + y*pad_width);
+            inv_b2 = _mm_loadu_ps(padded + x+2 + (y+1)*pad_width);
+            inv_c2 = _mm_loadu_ps(padded + x+2 + (y+2)*pad_width);
+            inv_a3 = _mm_loadu_ps(padded + x+3 + y*pad_width);
+            inv_b3 = _mm_loadu_ps(padded + x+3 + (y+1)*pad_width);
+            inv_c3 = _mm_loadu_ps(padded + x+3 + (y+2)*pad_width);
 
             // multiply kernel with current input block
-            inv_a = _mm_mul_ps(kv_a, inv_a);
-            inv_b = _mm_mul_ps(kv_b, inv_b);
-            inv_c = _mm_mul_ps(kv_c, inv_c);
+            inv_a0 = _mm_mul_ps(kv_a, inv_a0);
+            inv_b0 = _mm_mul_ps(kv_b, inv_b0);
+            inv_c0 = _mm_mul_ps(kv_c, inv_c0);
+            inv_a1 = _mm_mul_ps(kv_a, inv_a1);
+            inv_b1 = _mm_mul_ps(kv_b, inv_b1);
+            inv_c1 = _mm_mul_ps(kv_c, inv_c1);
+            inv_a2 = _mm_mul_ps(kv_a, inv_a2);
+            inv_b2 = _mm_mul_ps(kv_b, inv_b2);
+            inv_c2 = _mm_mul_ps(kv_c, inv_c2);
+            inv_a3 = _mm_mul_ps(kv_a, inv_a3);
+            inv_b3 = _mm_mul_ps(kv_b, inv_b3);
+            inv_c3 = _mm_mul_ps(kv_c, inv_c3);
 
             // summing
-            sum_v = _mm_add_ps(inv_a, sum_v);
-            sum_v = _mm_add_ps(inv_b, sum_v);
-            sum_v = _mm_add_ps(inv_c, sum_v);
+            sum_v0 = _mm_add_ps(inv_a0, sum_v0);
+            sum_v0 = _mm_add_ps(inv_b0, sum_v0);
+            sum_v0 = _mm_add_ps(inv_c0, sum_v0);
+            sum_v1 = _mm_add_ps(inv_a1, sum_v1);
+            sum_v1 = _mm_add_ps(inv_b1, sum_v1);
+            sum_v1 = _mm_add_ps(inv_c1, sum_v1);
+            sum_v2 = _mm_add_ps(inv_a2, sum_v2);
+            sum_v2 = _mm_add_ps(inv_b2, sum_v2);
+            sum_v2 = _mm_add_ps(inv_c2, sum_v2);
+            sum_v3 = _mm_add_ps(inv_a3, sum_v3);
+            sum_v3 = _mm_add_ps(inv_b3, sum_v3);
+            sum_v3 = _mm_add_ps(inv_c3, sum_v3);
 
-            float sum_arr[4] = {0,0,0,0};
-            _mm_storeu_ps(sum_arr, sum_v);
+            // read out vector data and perform final addition
+            _mm_storeu_ps(sum_arr+ 0, sum_v0);
+            _mm_storeu_ps(sum_arr+ 4, sum_v1);
+            _mm_storeu_ps(sum_arr+ 8, sum_v2);
+            _mm_storeu_ps(sum_arr+12, sum_v3);
 
+            // should we manually unroll this, or is compiler smart?
             for (int i = 0; i < 3; i++) {
-                cur_sum += sum_arr[i];
+                cur_sum0 += sum_arr[i];
+                cur_sum1 += sum_arr[i+4];
+                cur_sum2 += sum_arr[i+8];
+                cur_sum3 += sum_arr[i+12];
             }
 
             // store into out matrix
-            out[x+y*data_size_X] = cur_sum;
+            out[x+0+y*data_size_X] = cur_sum0;
+            out[x+1+y*data_size_X] = cur_sum1;
+            out[x+2+y*data_size_X] = cur_sum2;
+            out[x+3+y*data_size_X] = cur_sum3;
 		}
 	}
 
