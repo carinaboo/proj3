@@ -188,11 +188,11 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
 
             // summing
             sum_v = _mm_add_ps(inv_a, sum_v);
-            sum_v = _mm_add_ps(inv_b, sum_v); // can combine a+b into one _mm_add_ps
-            sum_v = _mm_add_ps(inv_c, sum_v); 
+            sum_v = _mm_add_ps(inv_b, sum_v);
+            sum_v = _mm_add_ps(inv_c, sum_v);
 
             float sum_arr[4] = {0,0,0,0};
-            _mm_storeu_ps(sum_arr, sum_v); // hadd sum_v before storing into array?
+            _mm_storeu_ps(sum_arr, sum_v);
 
             for (int i = 0; i < 3; i++) {
                 cur_sum += sum_arr[i];
@@ -200,17 +200,6 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
 
             // store into out matrix
             out[x+y*data_size_X] = cur_sum;
-            /*
-			for(int i = -kern_cent_X; i <= kern_cent_X; i++){ // kernel unflipped x coordinate
-				for(int j = -kern_cent_Y; j <= kern_cent_Y; j++){ // kernel unflipped y coordinate
-					// only do the operation if not out of bounds
-					if(x+i>-1 && x+i<data_size_X && y+j>-1 && y+j<data_size_Y){
-						//Note that the kernel is flipped
-						out[x+y*data_size_X] += 
-								kernel[(kern_cent_X-i)+(kern_cent_Y-j)*KERNX] * in[(x+i) + (y+j)*data_size_X];
-					}
-				}
-			}*/
 		}
 	}
 
