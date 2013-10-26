@@ -23,7 +23,7 @@ array2d zeroPad(array2d in, int pad_size) {
     size_t p_arr_size = pad_x*pad_y*sizeof(float);
     size_t line_size = in.width*sizeof(float);
 
-    float *padded = malloc(p_arr_size);
+    float *padded = (float*) malloc(p_arr_size);
 
     // zero out the whole dingus
     memset(padded, 0, p_arr_size);
@@ -142,6 +142,16 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     k_c1 = *(kernel + 1 + 0*KERNX);
     k_c2 = *(kernel + 0 + 0*KERNX);
 
+    // kernel vectorized
+    // later, we should make any size kernel work
+    float k_a[4] = {k_a0,k_a1,k_a2,0};
+    float k_b[4] = {k_b0,k_b1,k_b2,0};
+    float k_c[4] = {k_c0,k_c1,k_c2,0};
+    __m128 kv_a = _mm_loadu_ps(k_a);
+    __m128 kv_b = _mm_loadu_ps(k_b);
+    __m128 kv_c = _mm_loadu_ps(k_c);
+
+
     // pad the array with a ring of zeroes so we don't have to stress about dis shiz
     // using padding instead of ifs all over the place got us like ~1.5gflops
     array2d in_2d;
@@ -156,7 +166,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     // accumulator so we don't access deep array memory every multiply.
     float cur_sum = 0;
 
-    int ya, yb, yc; // y-1*width, y*width, y+1*width
+    // int ya, yb, yc; // y-1*width, y*width, y+1*width
     
     // main convolution loop
     // reording y before x got us 4gflops
@@ -164,28 +174,29 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
         for(int x = 0; x < data_size_X; x++){ // the x coordinate of the output location we're focusing on
             // re-initialize sum
             cur_sum = 0;
+            __m128 sum_v = _mm_setzero_ps();
 
-            // maybe register blocking these will speed things up?
-            // it didn't
-            ya = (y) * pad_width;
-            yb = (y+1) * pad_width;
-            yc = (y+2) * pad_width;
+            // current input block vectorized; last column of will be 0s when multiplied by kernel
+            __m128 inv_a = _mm_loadu_ps(padded + x + y*pad_width);
+            __m128 inv_b = _mm_loadu_ps(padded + x + (y+1)*pad_width);
+            __m128 inv_c = _mm_loadu_ps(padded + x + (y+2)*pad_width);
 
-            // for now i'm not handling top/bottom/left/right errors
-            // because it's a lot of if statements
-            // also note that the kernel is NOT flipped -- woo doing intuitive things
-            cur_sum += padded[x   + ya] * k_a0;
-            cur_sum += padded[x+1 + ya] * k_a1;
-            cur_sum += padded[x+2 + ya] * k_a2;
+            // multiply kernel with current input block
+            inv_a = _mm_mul_ps(kv_a, inv_a);
+            inv_b = _mm_mul_ps(kv_b, inv_b);
+            inv_c = _mm_mul_ps(kv_c, inv_c);
 
-            cur_sum += padded[x   + yb] * k_b0;
-            cur_sum += padded[x+1 + yb] * k_b1;
-            cur_sum += padded[x+2 + yb] * k_b2;
+            // summing
+            sum_v = _mm_add_ps(inv_a, sum_v);
+            sum_v = _mm_add_ps(inv_b, sum_v); // can combine a+b into one _mm_add_ps
+            sum_v = _mm_add_ps(inv_c, sum_v); 
 
-            cur_sum += padded[x   + yc] * k_c0;
-            cur_sum += padded[x+1 + yc] * k_c1;
-            cur_sum += padded[x+2 + yc] * k_c2;
+            float sum_arr[4] = {0,0,0,0};
+            _mm_storeu_ps(sum_arr, sum_v); // hadd sum_v before storing into array?
 
+            for (int i = 0; i < 3; i++) {
+                cur_sum += sum_arr[i];
+            }
 
             // store into out matrix
             out[x+y*data_size_X] = cur_sum;
