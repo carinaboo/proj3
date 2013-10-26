@@ -99,6 +99,44 @@ void test_array2d(int pad_size) {
     printArray(out);
 }
 
+/* new pseudocode:
+(obv don't do as function calls, its just to show you the idea)
+this is to do the  one-kernel-cell at a time algo with 9 hardcoded
+kernel vectors and no padding at all!!!!
+def do_row(kernel_row, image_y) {
+	x = 0
+	do_column(0, x)
+	do_column(1, x)
+	// don't do 3rd col because it would write out of bounds
+	for (x = 1; x < image_data_X-1; x++) {
+		do_column(0, x)
+		do_column(1, x)
+		do_column(2, x)
+	}
+	x++
+	do_column(1, x)
+	do_column(2, x)
+}
+
+// here's the main body
+y = 0
+do_row(a, y)
+do_row(b, y)
+// don't do c, y because it would write out of bounds
+for (y = 1; y < image_data_Y-1; y++) {
+	do_row(a,b,c, 0)
+}
+y++
+do_row(b, y)
+do_row(c, y)
+}
+
+
+: D
+*/
+
+
+
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
 {
