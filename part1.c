@@ -149,7 +149,6 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
     float kernel_unflipped[9] = {kernel[8], kernel[7], kernel[6], kernel[5], kernel[4], kernel[3], kernel[2], kernel[1], kernel[0]};
 
     // pad the array with a ring of zeroes so we don't have to stress about dis shiz
-    // using padding instead of ifs all over the place got us like ~1.5gflops
     array2d in_2d;
     in_2d.array = in;
     in_2d.width = data_size_X;
