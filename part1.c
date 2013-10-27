@@ -16,33 +16,59 @@ typedef struct {
 // for a 3x3 kernel, the pad_size should be one
 // in general pad_size = max((KERNX - 1)/2, (KERNY - 1)/2);
 // note that we'll need to free whatever memory is in *padded elsewhere!
+
+// SSE memcopy
+void memcopyFloats(float *dest, float *src, unsigned int count) {
+    __m128 buf1, buf2;
+    int i;
+    for (i = 0; i < ((count >> 4) << 4); i+=8) {
+        buf1 = _mm_loadu_ps(src + i);
+        buf2 = _mm_loadu_ps(src + i + 4);
+        _mm_storeu_ps(dest + i, buf1);
+        _mm_storeu_ps(dest + i + 4, buf2);
+    }
+    for ( ; i < count; i++) {
+        dest[i] = src[i];
+    }
+}
+
+// add a ring of pad_size zeros around an array
+// you are responsible for freeing the returned array2d.array
 array2d zeroPad(array2d in, int pad_size) {
-    array2d retval;
     int pad_x = in.width + pad_size*2;
     int pad_y = in.height + pad_size*2;
 
     size_t p_arr_size = pad_x*pad_y*sizeof(float);
-    size_t line_size = in.width*sizeof(float);
-
     float *padded = malloc(p_arr_size);
 
     // zero out the whole dingus
     memset(padded, 0, p_arr_size);
 
+    int max_stride = (in.height >> 1) << 1;
+
     // copy the original data into the zero-padded array
-    for (int i = in.height-1; i != -1; i--) {
+    int y;
+    for (y = 0; y < max_stride; y+=2) {
         //     0,0      y                   x         
-        memcpy(padded + pad_x*(i+pad_size) + pad_size,
-                // 0,y
-                in.array + i*in.width, 
-                line_size);
+        memcopyFloats(padded + pad_size + (y+pad_size)*pad_x,
+                in.array + y*in.width,
+                in.width);
+        memcopyFloats(padded + pad_size + (y+1+pad_size)*pad_x,
+                in.array + (y+1)*in.width,
+                in.width);
+    }
+    for (; y < in.height; y++) {
+        memcopyFloats(padded + pad_size + (y+pad_size)*pad_x,
+                in.array + y*in.width,
+                in.width);
     }
 
-    retval.array = padded;
-    retval.width = pad_x;
-    retval.height = pad_y;
-
-    return retval;
+    array2d r = {
+        pad_x,
+        pad_y,
+        padded
+    };
+    return r;
 }
 
 // unpads padded.array by pad_size from all size
@@ -100,41 +126,6 @@ void test_array2d(int pad_size) {
     printArray(out);
 }
 
-/* new pseudocode:
-(obv don't do as function calls, its just to show you the idea)
-this is to do the  one-kernel-cell at a time algo with 9 hardcoded
-kernel vectors and no padding at all!!!!
-def do_row(kernel_row, image_y) {
-	x = 0
-	do_column(0, x)
-	do_column(1, x)
-	// don't do 3rd col because it would write out of bounds
-	for (x = 1; x < image_data_X-1; x++) {
-		do_column(0, x)
-		do_column(1, x)
-		do_column(2, x)
-	}
-	x++
-	do_column(1, x)
-	do_column(2, x)
-}
-
-// here's the main body
-y = 0
-do_row(a, y)
-do_row(b, y)
-// don't do c, y because it would write out of bounds
-for (y = 1; y < image_data_Y-1; y++) {
-	do_row(a,b,c, 0)
-}
-y++
-do_row(b, y)
-do_row(c, y)
-}
-
-
-: D
-*/
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
 {
@@ -223,8 +214,10 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     int x;
     
 #define STRIDE 8
+#define FLOOR_MULTIPLE( N, FACTOR ) (N)/(FACTOR)*(FACTOR)
+#define FLOOR_EVEN( N ) (((N) >> 1) << 1)
     int max_stride = data_size_X/STRIDE*STRIDE;
-    int max_even = ((data_size_X >> 2) << 2);
+    int max_even = FLOOR_EVEN(data_size_X);
     // main convolution loop
     // reording y before x got us 4gflops
     for(int y = 0; y < data_size_Y; y++){ // the y coordinate of theoutput location we're focusing on
