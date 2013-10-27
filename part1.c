@@ -1,3 +1,4 @@
+#include <pmmintrin.h>
 #include <emmintrin.h>
 #include <string.h>
 #include <stdio.h>
@@ -180,6 +181,32 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     k_c1 = *(kernel + 1 + 0*KERNX);
     k_c2 = *(kernel + 0 + 0*KERNX);
 
+    // useful later
+    __m128 zero_v = _mm_setzero_ps();
+
+    // kernels with zero in front and zero in back
+    // trying to reduce SSE loads later on
+    float kv_a_data[4] = {k_a0, k_a1, k_a2, 0};
+    float kv_b_data[4] = {k_b0, k_b1, k_b2, 0};
+    float kv_c_data[4] = {k_c0, k_c1, k_c2, 0};
+
+    float zkv_a_data[4] = {0, k_a0, k_a1, k_a2};
+    float zkv_b_data[4] = {0, k_b0, k_b1, k_b2};
+    float zkv_c_data[4] = {0, k_c0, k_c1, k_c2};
+
+    // zero-trailing
+    __m128 kv_a = _mm_loadu_ps(kv_a_data);
+    __m128 kv_b = _mm_loadu_ps(kv_b_data);
+    __m128 kv_c = _mm_loadu_ps(kv_c_data);
+    // zero-leading
+    __m128 zkv_a = _mm_loadu_ps(zkv_a_data);
+    __m128 zkv_b = _mm_loadu_ps(zkv_b_data);
+    __m128 zkv_c = _mm_loadu_ps(zkv_c_data);
+
+    // load registers for the loop
+    __m128 load_a, load_b, load_c;
+    __m128 sum_v;
+
     // pad the array with a ring of zeroes so we don't have to stress about dis shiz
     // using padding instead of ifs all over the place got us like ~1.5gflops
     array2d in_2d;
@@ -195,49 +222,56 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     float cur_sum = 0;
 
     int ya, yb, yc; // y-1*width, y*width, y+1*width
+    int x;
     
     // main convolution loop
     // reording y before x got us 4gflops
     for(int y = 0; y < data_size_Y; y++){ // the y coordinate of theoutput location we're focusing on
-        for(int x = 0; x < data_size_X; x++){ // the x coordinate of the output location we're focusing on
-            // re-initialize sum
-            cur_sum = 0;
+        // maybe register blocking these will speed things up?
+        // it didn't
+        ya = y * pad_width;
+        yb = ya + pad_width;
+        yc = yb + pad_width;
+        for(x = 0; x < data_size_X; x+=2){ // the x coordinate of the output location we're focusing on
+            // load the data for the next two steps... our own little 4x3 matrix
+            load_a = _mm_loadu_ps(padded + x + ya);
+            load_b = _mm_loadu_ps(padded + x + yb);
+            load_c = _mm_loadu_ps(padded + x + yc);
 
-            // maybe register blocking these will speed things up?
-            // it didn't
-            ya = (y) * pad_width;
-            yb = (y+1) * pad_width;
-            yc = (y+2) * pad_width;
+            // zero-trailing first obv
+            sum_v = _mm_add_ps(
+                        _mm_mul_ps(load_a, kv_a),
+                        _mm_add_ps(
+                            _mm_mul_ps(load_b, kv_b),
+                            _mm_mul_ps(load_c, kv_c)));
+            // add up everything in sum_v and store it
+            sum_v = _mm_hadd_ps(sum_v, sum_v);
+            sum_v = _mm_hadd_ps(sum_v, sum_v);
+            _mm_store_ss(out+x+y*data_size_X, sum_v);
 
-            // for now i'm not handling top/bottom/left/right errors
-            // because it's a lot of if statements
-            // also note that the kernel is NOT flipped -- woo doing intuitive things
-            cur_sum += padded[x   + ya] * k_a0;
-            cur_sum += padded[x+1 + ya] * k_a1;
-            cur_sum += padded[x+2 + ya] * k_a2;
+            // zero-leading, next step
+            sum_v = _mm_add_ps(
+                        _mm_mul_ps(load_a, zkv_a),
+                        _mm_add_ps(
+                            _mm_mul_ps(load_b, zkv_b),
+                            _mm_mul_ps(load_c, zkv_c)));
+            // add up everything in sum_v and store it
+            sum_v = _mm_hadd_ps(sum_v, sum_v);
+            sum_v = _mm_hadd_ps(sum_v, sum_v);
+            _mm_store_ss(out+x+1+y*data_size_X, sum_v);
 
-            cur_sum += padded[x   + yb] * k_b0;
-            cur_sum += padded[x+1 + yb] * k_b1;
-            cur_sum += padded[x+2 + yb] * k_b2;
 
-            cur_sum += padded[x   + yc] * k_c0;
-            cur_sum += padded[x+1 + yc] * k_c1;
-            cur_sum += padded[x+2 + yc] * k_c2;
+            /*cur_sum += padded[x   + yb] * k_b0;*/
+            /*cur_sum += padded[x+1 + yb] * k_b1;*/
+            /*cur_sum += padded[x+2 + yb] * k_b2;*/
+
+            /*cur_sum += padded[x   + yc] * k_c0;*/
+            /*cur_sum += padded[x+1 + yc] * k_c1;*/
+            /*cur_sum += padded[x+2 + yc] * k_c2;*/
 
 
             // store into out matrix
-            out[x+y*data_size_X] = cur_sum;
-            /*
-			for(int i = -kern_cent_X; i <= kern_cent_X; i++){ // kernel unflipped x coordinate
-				for(int j = -kern_cent_Y; j <= kern_cent_Y; j++){ // kernel unflipped y coordinate
-					// only do the operation if not out of bounds
-					if(x+i>-1 && x+i<data_size_X && y+j>-1 && y+j<data_size_Y){
-						//Note that the kernel is flipped
-						out[x+y*data_size_X] += 
-								kernel[(kern_cent_X-i)+(kern_cent_Y-j)*KERNX] * in[(x+i) + (y+j)*data_size_X];
-					}
-				}
-			}*/
+            // out[x+y*data_size_X] = cur_sum;
 		}
 	}
 
