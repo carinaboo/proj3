@@ -52,7 +52,7 @@ void unPad(array2d padded, array2d out, int pad_size) {
     float *src = padded.array;
     float *dst = out.array;
     size_t line_size = out.width*sizeof(float);
-    for (int i = out.height-1; i != -1; i--) {
+    for (int i = 0; i < out.height; i++) {
         memcpy(dst + i*out.width,
                src + padded.width*(i+pad_size) + pad_size,
                line_size);
@@ -161,17 +161,35 @@ _mm_store_ps(in_origin + 1 + data_size_Y,
     _mm_storeu_ps(out + (OFFSET) + (1-(KERN_COL)) +  ROW_OFFSET_##KERN_ROW, \
         _mm_add_ps( \
                 _mm_mul_ps( kv_##KERN_ROW##KERN_COL , (IN_VEC)), \
-                _mm_loadu_ps(in + (OFFSET) + (1-(KERN_COL)) + ROW_OFFSET_##KERN_ROW)))
+                _mm_loadu_ps(out + (OFFSET) + (1-(KERN_COL)) + ROW_OFFSET_##KERN_ROW)))
 
 // assumes *float out
-#define ROW_OFFSET_PADDED_a (data_size_X+2)
+#define ROW_OFFSET_PADDED_a (pad_w)
 #define ROW_OFFSET_PADDED_b 0
-#define ROW_OFFSET_PADDED_c (-data_size_X-2)
+#define ROW_OFFSET_PADDED_c (-pad_w)
 #define VECT_CONV_PADDED( KERN_ROW, KERN_COL, IN_VEC, OFFSET ) \
-    _mm_storeu_ps(padded + (OFFSET)+1 + (1-(KERN_COL)) +  ROW_OFFSET_##KERN_ROW, \
+    _mm_storeu_ps(padded + (OFFSET) + (1-(KERN_COL)) +  ROW_OFFSET_PADDED_##KERN_ROW, \
         _mm_add_ps( \
                 _mm_mul_ps( kv_##KERN_ROW##KERN_COL , (IN_VEC)), \
-                _mm_loadu_ps(in + (OFFSET) + (1-(KERN_COL)) + ROW_OFFSET_##KERN_ROW)))
+                _mm_loadu_ps(padded + (OFFSET) + (1-(KERN_COL)) + ROW_OFFSET_PADDED_##KERN_ROW)))
+
+#define RUN_COLUMN( KERN_ROW, KERN_COL) \
+        for(x = 0; x < x_stride_max; x+=STRIDE) { \
+            offset = x + start_of_row; \
+            p_offset = x + p_start_of_row; \
+            in_v = _mm_loadu_ps(in+offset); \
+            VECT_CONV_PADDED(KERN_ROW, KERN_COL, in_v, p_offset); \
+        } \
+        for ( ; x < data_size_X; x++) { \
+            offset = x + start_of_row; \
+            p_offset = x + p_start_of_row; \
+            out[p_offset + (1-(KERN_COL)) + ROW_OFFSET_##KERN_ROW] += in[offset] * k_##KERN_ROW##0; \
+        }\
+
+#define RUN_KERNEL( KERN_ROW ) \
+    RUN_COLUMN( KERN_ROW, 0 ); \
+    RUN_COLUMN( KERN_ROW, 1 ); \
+    RUN_COLUMN( KERN_ROW, 2 ); \
 
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
@@ -227,57 +245,43 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     __m128 kv_c1 = _mm_load1_ps(&k_c1);
     __m128 kv_c2 = _mm_load1_ps(&k_c2);
 
-    int y = 0;
-    int x = 0;
-    int start_of_row = 0;
+    array2d pad;
+    array2d out2d;
+    out2d.width = data_size_X;
+    pad.width = data_size_X+2;
+    out2d.height = data_size_Y;
+    pad.height = data_size_Y+2;
 
-    int x_stride_max = ((data_size_X+1)/STRIDE)*STRIDE;
+    float padded[ (data_size_X+2) * (data_size_Y+2) ];
+    memset(padded, 0, (data_size_X+2) * (data_size_Y+2) * sizeof(float));
+    pad.array = padded;
+
+    out2d.array = out;
+
+
+    int pad_w = pad.width;
+    int x_stride_max = ((data_size_X)/STRIDE)*STRIDE;
     int offset;
+    int p_offset;
+    int start_of_row;
+    int p_start_of_row;
+
+    int x;
 
     // current in-array 4-tuple
     __m128 in_v;
 
-    for(y = 1; y < data_size_Y+1; y++){ // the y coordinate of theoutput location we're focusing on
-        for(x = 1; x < x_stride_max; x+=STRIDE){ // the x coordinate of the output location we're focusing on
+    for(int y = 0; y < data_size_Y; y++){ // the y coordinate of theoutput location we're focusing on
 
-            // get data
-            offset = x + start_of_row;
-            in_v = _mm_loadu_ps(in+offset);
+        start_of_row = y * data_size_X;
+        p_start_of_row = (y+1) * pad_w + 1;
 
-            // VECT_CONV( KERN_ROW, KERN_COL, IN_VEC, OFFSET )
-            VECT_CONV(a, 2, in_v, offset);
-            VECT_CONV(a, 1, in_v, offset);
-            VECT_CONV(a, 0, in_v, offset);
-
-            VECT_CONV(b, 2, in_v, offset);
-            VECT_CONV(b, 1, in_v, offset);
-            VECT_CONV(b, 0, in_v, offset);
-
-            VECT_CONV(c, 2, in_v, offset);
-            VECT_CONV(c, 1, in_v, offset);
-            VECT_CONV(c, 0, in_v, offset);
-        }
-
-        // oh got this is gonna b slow
-        // TODO: correct the overflow bug here
-        for ( ; x < data_size_X; x++) {
-            offset = x + start_of_row;
-
-            // god so naive
-            // why did i think this would be gud?
-            out[offset + 1 + data_size_X] += in[offset] * k_a0;
-            out[offset + 1]               += in[offset] * k_b0;
-            out[offset + 1 - data_size_X] += in[offset] * k_c0;
-
-            out[offset + data_size_X]     += in[offset] * k_a1;
-            out[offset]                   += in[offset] * k_b1;
-            out[offset - data_size_X]     += in[offset] * k_c1;
-
-            out[offset - 1 + data_size_X] += in[offset] * k_a2;
-            out[offset - 1]               += in[offset] * k_b2;
-            out[offset - 1 - data_size_X] += in[offset] * k_c2;
-		}
+        RUN_KERNEL( a );
+        RUN_KERNEL( b );
+        RUN_KERNEL( c );
 	}
+
+    unPad(pad, out2d, 1);
 
     // free the padded matrix
 	return 1;
