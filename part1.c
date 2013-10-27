@@ -135,9 +135,6 @@ do_row(c, y)
 
 : D
 */
-
-
-
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
 {
@@ -223,6 +220,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
 
     int ya, yb, yc; // y-1*width, y*width, y+1*width
     int x;
+    int sum;
     
     // main convolution loop
     // reording y before x got us 4gflops
@@ -232,8 +230,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
         ya = y * pad_width;
         yb = ya + pad_width;
         yc = yb + pad_width;
-        for(x = 0; x < data_size_X; x+=2){ // the x coordinate of the output location we're focusing on
-            // load the data for the next two steps... our own little 4x3 matrix
+        for(x = 0; x < data_size_X; x+=4){ // the x coordinate of the output location we're focusing on
             load_a = _mm_loadu_ps(padded + x + ya);
             load_b = _mm_loadu_ps(padded + x + yb);
             load_c = _mm_loadu_ps(padded + x + yc);
@@ -259,6 +256,32 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
             sum_v = _mm_hadd_ps(sum_v, sum_v);
             sum_v = _mm_hadd_ps(sum_v, sum_v);
             _mm_store_ss(out+x+1+y*data_size_X, sum_v);
+
+            load_a = _mm_loadu_ps(padded + x+2 + ya);
+            load_b = _mm_loadu_ps(padded + x+2 + yb);
+            load_c = _mm_loadu_ps(padded + x+2 + yc);
+
+            // zero-trailing first obv
+            sum_v = _mm_add_ps(
+                        _mm_mul_ps(load_a, kv_a),
+                        _mm_add_ps(
+                            _mm_mul_ps(load_b, kv_b),
+                            _mm_mul_ps(load_c, kv_c)));
+            // add up everything in sum_v and store it
+            sum_v = _mm_hadd_ps(sum_v, sum_v);
+            sum_v = _mm_hadd_ps(sum_v, sum_v);
+            _mm_store_ss(out+x+2+y*data_size_X, sum_v);
+
+            // zero-leading, next step
+            sum_v = _mm_add_ps(
+                        _mm_mul_ps(load_a, zkv_a),
+                        _mm_add_ps(
+                            _mm_mul_ps(load_b, zkv_b),
+                            _mm_mul_ps(load_c, zkv_c)));
+            // add up everything in sum_v and store it
+            sum_v = _mm_hadd_ps(sum_v, sum_v);
+            sum_v = _mm_hadd_ps(sum_v, sum_v);
+            _mm_store_ss(out+x+3+y*data_size_X, sum_v);
 
 
             /*cur_sum += padded[x   + yb] * k_b0;*/
