@@ -138,7 +138,6 @@ do_row(c, y)
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
 {
-    size_t float_size = sizeof(float);
     // the x coordinate of the kernel's center
     int kern_cent_X = (KERNX - 1)/2;
     // the y coordinate of the kernel's center
@@ -206,22 +205,26 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
 
     // pad the array with a ring of zeroes so we don't have to stress about dis shiz
     // using padding instead of ifs all over the place got us like ~1.5gflops
-    array2d in_2d;
-    in_2d.array = in;
-    in_2d.width = data_size_X;
-    in_2d.height = data_size_Y;
+    // width height array
+    array2d in_2d = {
+        data_size_X,
+        data_size_Y,
+        in
+    };
+
     array2d pad_2d = zeroPad(in_2d, 1);
     float* padded = pad_2d.array;
     int pad_width = pad_2d.width;
-
 
     // accumulator so we don't access deep array memory every multiply.
     float cur_sum = 0;
 
     int ya, yb, yc; // y-1*width, y*width, y+1*width
     int x;
-    int sum;
     
+#define STRIDE 8
+    int max_stride = data_size_X/STRIDE*STRIDE;
+    int max_even = ((data_size_X >> 2) << 2);
     // main convolution loop
     // reording y before x got us 4gflops
     for(int y = 0; y < data_size_Y; y++){ // the y coordinate of theoutput location we're focusing on
@@ -230,7 +233,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
         ya = y * pad_width;
         yb = ya + pad_width;
         yc = yb + pad_width;
-        for(x = 0; x < data_size_X; x+=4){ // the x coordinate of the output location we're focusing on
+        for(x = 0; x < max_stride; x+=STRIDE){ // the x coordinate of the output location we're focusing on
 
 #define TWO_STEP( BEAT ) \
     load_a = _mm_loadu_ps(padded + x + (BEAT) + ya);\
@@ -257,10 +260,38 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
 
             TWO_STEP(0);
             TWO_STEP(2);
+            TWO_STEP(4);
+            TWO_STEP(6);
 
 		}
-	}
 
+        // usual base case - its even
+        for ( ; x < max_even; x++ ) {
+            TWO_STEP(0);
+        }
+
+        // this will almost never be used, because it will only really come out on 
+        // odd equations
+        for ( ; x < data_size_X; x++) {
+            // usual fast but naive solution
+            cur_sum = 0;
+            cur_sum += padded[x + ya] * k_a0;
+            cur_sum += padded[x+1 + ya] * k_a1;
+            cur_sum += padded[x+2 + ya] * k_a2;
+
+            cur_sum += padded[x + yb] * k_b0;
+            cur_sum += padded[x+1 + yb] * k_b1;
+            cur_sum += padded[x+2 + yb] * k_b2;
+
+            cur_sum += padded[x + yc] * k_c0;
+            cur_sum += padded[x+1 + yc] * k_c1;
+            cur_sum += padded[x+2 + yc] * k_c2;
+
+
+            // store into out matrix
+            out[x+y*data_size_X] = cur_sum;
+        }
+	}
     // free the padded matrix
     free(padded);
 	return 1;
