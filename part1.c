@@ -2,8 +2,9 @@
 #include <string.h>
 #include <stdio.h>
 // string.h for memset
-#define KERNX 3 //this is the x-size of the kernel. It will always be odd.
-#define KERNY 3 //this is the y-size of the kernel. It will always be odd.
+#define KERNX 3 // this is the x-size of the kernel. It will always be odd.
+#define KERNY 3 // this is the y-size of the kernel. It will always be odd.
+#define STRIDE 4
 
 typedef struct {
     int width;
@@ -58,7 +59,6 @@ void unPad(array2d padded, array2d out, int pad_size) {
                line_size);
     }
 }
-
 
 // tool for debugging zeroPad
 void printArray(array2d array) {
@@ -125,32 +125,25 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
      *    ----------
      */
 
-    // register-blocking the kernel got us like ~2.5gflops
-    // along with regoster-blocking the current sum
-    float k_a0, k_a1, k_a2, 
-          k_b0, k_b1, k_b2,
-          k_c0, k_c1, k_c2;
+    // vectorized values of kernel
+    /*
+    __m128 kv_a0, kv_a1, kv_a2, 
+           kv_b0, kv_b1, kv_b2,
+           kv_c0, kv_c1, kv_c2;
 
-    // kernel un-flipped because why would you do that to me
-    k_a0 = *(kernel + 2 + 2*KERNX);
-    k_a1 = *(kernel + 1 + 2*KERNX);
-    k_a2 = *(kernel + 0 + 2*KERNX);
-    k_b0 = *(kernel + 2 + 1*KERNX);
-    k_b1 = *(kernel + 1 + 1*KERNX);
-    k_b2 = *(kernel + 0 + 1*KERNX);
-    k_c0 = *(kernel + 2 + 0*KERNX);
-    k_c1 = *(kernel + 1 + 0*KERNX);
-    k_c2 = *(kernel + 0 + 0*KERNX);
+    kv_a0 = _mm_load1_ps(*(kernel + 2 + 2*KERNX));
+    kv_a1 = _mm_load1_ps(*(kernel + 1 + 2*KERNX));
+    kv_a2 = _mm_load1_ps(*(kernel + 0 + 2*KERNX));
+    kv_b0 = _mm_load1_ps(*(kernel + 2 + 1*KERNX));
+    kv_b1 = _mm_load1_ps(*(kernel + 1 + 1*KERNX));
+    kv_b2 = _mm_load1_ps(*(kernel + 0 + 1*KERNX));
+    kv_c0 = _mm_load1_ps(*(kernel + 2 + 0*KERNX));
+    kv_c1 = _mm_load1_ps(*(kernel + 1 + 0*KERNX));
+    kv_c2 = _mm_load1_ps(*(kernel + 0 + 0*KERNX));
+    */
 
-    // kernel vectorized
-    // later, we should make any size kernel work
-    float k_a[4] = {k_a0,k_a1,k_a2,0};
-    float k_b[4] = {k_b0,k_b1,k_b2,0};
-    float k_c[4] = {k_c0,k_c1,k_c2,0};
-    __m128 kv_a = _mm_loadu_ps(k_a);
-    __m128 kv_b = _mm_loadu_ps(k_b);
-    __m128 kv_c = _mm_loadu_ps(k_c);
-
+    // hardcoded unflipped kernel array, fix later
+    float kernel_unflipped[9] = {kernel[8], kernel[7], kernel[6], kernel[5], kernel[4], kernel[3], kernel[2], kernel[1], kernel[0]};
 
     // pad the array with a ring of zeroes so we don't have to stress about dis shiz
     // using padding instead of ifs all over the place got us like ~1.5gflops
@@ -160,21 +153,53 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     in_2d.height = data_size_Y;
     array2d pad_2d = zeroPad(in_2d, 1);
     float* padded = pad_2d.array;
-    int pad_width = pad_2d.width;
-
 
     // accumulator so we don't access deep array memory every multiply.
     float cur_sum = 0;
-
-    // int ya, yb, yc; // y-1*width, y*width, y+1*width
     
+    __m128  kv_0, kv_1, kv_2,
+            inv_0, inv_1, inv_2,
+            outv_0;
+            // later will need 6 inv and 2 outv if we want to do STRIDE 8
+
     // main convolution loop
-    // reording y before x got us 4gflops
-    for(int y = 0; y < data_size_Y; y++){ // the y coordinate of theoutput location we're focusing on
-        for(int x = 0; x < data_size_X; x++){ // the x coordinate of the output location we're focusing on
+    for (int j = 0; j < KERNY; j++){ // deal with one row of kernel at a time
+        for(int y = j; y < data_size_Y; y++){ // the row of padded input
+            // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
+            for(int x = 0; x < data_size_X/STRIDE*STRIDE; x+=STRIDE){ // x coordinate of padded input
+
+                // load 4 copies of each column value in current kernel row into vectors
+                kv_0 = _mm_load1_ps(kernel_unflipped + j*KERNX + 0); // [j0, j0, j0, j0]
+                kv_1 = _mm_load1_ps(kernel_unflipped + j*KERNX + 1); // [j1, j1, j1, j1]
+                kv_2 = _mm_load1_ps(kernel_unflipped + j*KERNX + 2); // [j2, j2, j2, j2]
+
+                // load corresponding input block we'll be multiplying with
+                inv_0 = _mm_loadu_ps(padded + y*data_size_X + x + 0); // [y0, y1, y2, y3]
+                inv_1 = _mm_loadu_ps(padded + y*data_size_X + x + 1); // [y1, y2, y3, y4]
+                inv_2 = _mm_loadu_ps(padded + y*data_size_X + x + 2); // [y2, y3, y4, y5]
+
+                // multiply
+                inv_0 = _mm_mul_ps(kv_0, inv_0);
+                inv_1 = _mm_mul_ps(kv_1, inv_1);
+                inv_2 = _mm_mul_ps(kv_2, inv_2);
+
+                // load corresponding output block we'll sum with; all 3 input blocks sum to same output block
+                outv_0 = _mm_loadu_ps(out + y*data_size_X + x);
+
+                // sum
+                outv_0 = _mm_add_ps(inv_0, outv_0);
+                outv_0 = _mm_add_ps(inv_1, outv_0);
+                outv_0 = _mm_add_ps(inv_2, outv_0);
+
+                // store into output image array
+                _mm_storeu_ps(out + x + y*data_size_X, outv_0);
+                
+            }
             // re-initialize sum
             cur_sum = 0;
             __m128 sum_v = _mm_setzero_ps();
+
+            //
 
             // current input block vectorized; last column of will be 0s when multiplied by kernel
             __m128 inv_a = _mm_loadu_ps(padded + x + y*pad_width);
