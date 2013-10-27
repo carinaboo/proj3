@@ -231,70 +231,33 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
         yb = ya + pad_width;
         yc = yb + pad_width;
         for(x = 0; x < data_size_X; x+=4){ // the x coordinate of the output location we're focusing on
-            load_a = _mm_loadu_ps(padded + x + ya);
-            load_b = _mm_loadu_ps(padded + x + yb);
-            load_c = _mm_loadu_ps(padded + x + yc);
 
-            // zero-trailing first obv
-            sum_v = _mm_add_ps(
-                        _mm_mul_ps(load_a, kv_a),
-                        _mm_add_ps(
-                            _mm_mul_ps(load_b, kv_b),
-                            _mm_mul_ps(load_c, kv_c)));
-            // add up everything in sum_v and store it
-            sum_v = _mm_hadd_ps(sum_v, sum_v);
-            sum_v = _mm_hadd_ps(sum_v, sum_v);
-            _mm_store_ss(out+x+y*data_size_X, sum_v);
+#define TWO_STEP( BEAT ) \
+    load_a = _mm_loadu_ps(padded + x + (BEAT) + ya);\
+    load_b = _mm_loadu_ps(padded + x + (BEAT) + yb);\
+    load_c = _mm_loadu_ps(padded + x + (BEAT) + yc);\
+\
+    sum_v = _mm_add_ps(\
+                _mm_mul_ps(load_a, kv_a),\
+                _mm_add_ps(\
+                    _mm_mul_ps(load_b, kv_b),\
+                    _mm_mul_ps(load_c, kv_c)));\
+    sum_v = _mm_hadd_ps(sum_v, sum_v);\
+    sum_v = _mm_hadd_ps(sum_v, sum_v);\
+    _mm_store_ss(out+x+(BEAT)+y*data_size_X, sum_v);\
+\
+    sum_v = _mm_add_ps(\
+                _mm_mul_ps(load_a, zkv_a),\
+                _mm_add_ps(\
+                    _mm_mul_ps(load_b, zkv_b),\
+                    _mm_mul_ps(load_c, zkv_c)));\
+    sum_v = _mm_hadd_ps(sum_v, sum_v);\
+    sum_v = _mm_hadd_ps(sum_v, sum_v);\
+    _mm_store_ss(out+x+1+ (BEAT) +y*data_size_X, sum_v);\
 
-            // zero-leading, next step
-            sum_v = _mm_add_ps(
-                        _mm_mul_ps(load_a, zkv_a),
-                        _mm_add_ps(
-                            _mm_mul_ps(load_b, zkv_b),
-                            _mm_mul_ps(load_c, zkv_c)));
-            // add up everything in sum_v and store it
-            sum_v = _mm_hadd_ps(sum_v, sum_v);
-            sum_v = _mm_hadd_ps(sum_v, sum_v);
-            _mm_store_ss(out+x+1+y*data_size_X, sum_v);
+            TWO_STEP(0);
+            TWO_STEP(2);
 
-            load_a = _mm_loadu_ps(padded + x+2 + ya);
-            load_b = _mm_loadu_ps(padded + x+2 + yb);
-            load_c = _mm_loadu_ps(padded + x+2 + yc);
-
-            // zero-trailing first obv
-            sum_v = _mm_add_ps(
-                        _mm_mul_ps(load_a, kv_a),
-                        _mm_add_ps(
-                            _mm_mul_ps(load_b, kv_b),
-                            _mm_mul_ps(load_c, kv_c)));
-            // add up everything in sum_v and store it
-            sum_v = _mm_hadd_ps(sum_v, sum_v);
-            sum_v = _mm_hadd_ps(sum_v, sum_v);
-            _mm_store_ss(out+x+2+y*data_size_X, sum_v);
-
-            // zero-leading, next step
-            sum_v = _mm_add_ps(
-                        _mm_mul_ps(load_a, zkv_a),
-                        _mm_add_ps(
-                            _mm_mul_ps(load_b, zkv_b),
-                            _mm_mul_ps(load_c, zkv_c)));
-            // add up everything in sum_v and store it
-            sum_v = _mm_hadd_ps(sum_v, sum_v);
-            sum_v = _mm_hadd_ps(sum_v, sum_v);
-            _mm_store_ss(out+x+3+y*data_size_X, sum_v);
-
-
-            /*cur_sum += padded[x   + yb] * k_b0;*/
-            /*cur_sum += padded[x+1 + yb] * k_b1;*/
-            /*cur_sum += padded[x+2 + yb] * k_b2;*/
-
-            /*cur_sum += padded[x   + yc] * k_c0;*/
-            /*cur_sum += padded[x+1 + yc] * k_c1;*/
-            /*cur_sum += padded[x+2 + yc] * k_c2;*/
-
-
-            // store into out matrix
-            // out[x+y*data_size_X] = cur_sum;
 		}
 	}
 
