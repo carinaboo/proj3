@@ -4,7 +4,6 @@
 // string.h for memset
 #define KERNX 3 // this is the x-size of the kernel. It will always be odd.
 #define KERNY 3 // this is the y-size of the kernel. It will always be odd.
-#define STRIDE 4
 
 typedef struct {
     int width;
@@ -125,23 +124,26 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
      *    ----------
      */
 
-    // vectorized values of kernel
+    // kernel
     /*
-    __m128 kv_a0, kv_a1, kv_a2, 
-           kv_b0, kv_b1, kv_b2,
-           kv_c0, kv_c1, kv_c2;
+    float kv_a0, kv_a1, kv_a2, 
+          kv_b0, kv_b1, kv_b2,
+          kv_c0, kv_c1, kv_c2;
 
-    kv_a0 = _mm_load1_ps(*(kernel + 2 + 2*KERNX));
-    kv_a1 = _mm_load1_ps(*(kernel + 1 + 2*KERNX));
-    kv_a2 = _mm_load1_ps(*(kernel + 0 + 2*KERNX));
-    kv_b0 = _mm_load1_ps(*(kernel + 2 + 1*KERNX));
-    kv_b1 = _mm_load1_ps(*(kernel + 1 + 1*KERNX));
-    kv_b2 = _mm_load1_ps(*(kernel + 0 + 1*KERNX));
-    kv_c0 = _mm_load1_ps(*(kernel + 2 + 0*KERNX));
-    kv_c1 = _mm_load1_ps(*(kernel + 1 + 0*KERNX));
-    kv_c2 = _mm_load1_ps(*(kernel + 0 + 0*KERNX));
+    kv_a0 = *(kernel + 2 + 2*KERNX);
+    kv_a1 = *(kernel + 1 + 2*KERNX);
+    kv_a2 = *(kernel + 0 + 2*KERNX);
+    kv_b0 = *(kernel + 2 + 1*KERNX);
+    kv_b1 = *(kernel + 1 + 1*KERNX);
+    kv_b2 = *(kernel + 0 + 1*KERNX);
+    kv_c0 = *(kernel + 2 + 0*KERNX);
+    kv_c1 = *(kernel + 1 + 0*KERNX);
+    kv_c2 = *(kernel + 0 + 0*KERNX);
+    
+    float kernel_unflipped[9] = {kv_a0, kv_a1, kv_a2,
+                                 kv_b0, kv_b1, kv_b2,
+                                 kv_c0, kv_c1, kv_c2,};
     */
-
     // hardcoded unflipped kernel array, fix later
     float kernel_unflipped[9] = {kernel[8], kernel[7], kernel[6], kernel[5], kernel[4], kernel[3], kernel[2], kernel[1], kernel[0]};
 
@@ -153,30 +155,33 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     in_2d.height = data_size_Y;
     array2d pad_2d = zeroPad(in_2d, 1);
     float* padded = pad_2d.array;
+    int padded_width = pad_2d.width;
 
-    // accumulator so we don't access deep array memory every multiply.
-    float cur_sum = 0;
     
     __m128  kv_0, kv_1, kv_2,
             inv_0, inv_1, inv_2,
             outv_0;
             // later will need 6 inv and 2 outv if we want to do STRIDE 8
 
+#define STRIDE 4
+#define FLOOR_MULTIPLE( N, FACTOR ) (N)/(FACTOR)*(FACTOR)
+
     // main convolution loop
     for (int j = 0; j < KERNY; j++){ // deal with one row of kernel at a time
-        for(int y = j; y < data_size_Y; y++){ // the row of padded input
-            // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
-            for(int x = 0; x < data_size_X/STRIDE*STRIDE; x+=STRIDE){ // x coordinate of padded input
+        
+        // load 4 copies of each column value in current kernel row into vectors
+        kv_0 = _mm_load1_ps(kernel_unflipped + j*KERNX + 0); // [j0, j0, j0, j0]
+        kv_1 = _mm_load1_ps(kernel_unflipped + j*KERNX + 1); // [j1, j1, j1, j1]
+        kv_2 = _mm_load1_ps(kernel_unflipped + j*KERNX + 2); // [j2, j2, j2, j2]
 
-                // load 4 copies of each column value in current kernel row into vectors
-                kv_0 = _mm_load1_ps(kernel_unflipped + j*KERNX + 0); // [j0, j0, j0, j0]
-                kv_1 = _mm_load1_ps(kernel_unflipped + j*KERNX + 1); // [j1, j1, j1, j1]
-                kv_2 = _mm_load1_ps(kernel_unflipped + j*KERNX + 2); // [j2, j2, j2, j2]
+        for(int y = j; y < data_size_Y+j; y++){ // the row of padded input
+            // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
+            for(int x = 0; x < FLOOR_MULTIPLE(data_size_X,STRIDE); x+=STRIDE){ // x coordinate of padded input
 
                 // load corresponding input block we'll be multiplying with
-                inv_0 = _mm_loadu_ps(padded + y*data_size_X + x + 0); // [y0, y1, y2, y3]
-                inv_1 = _mm_loadu_ps(padded + y*data_size_X + x + 1); // [y1, y2, y3, y4]
-                inv_2 = _mm_loadu_ps(padded + y*data_size_X + x + 2); // [y2, y3, y4, y5]
+                inv_0 = _mm_loadu_ps(padded + y*padded_width + x+0); // [y0, y1, y2, y3]
+                inv_1 = _mm_loadu_ps(padded + y*padded_width + x+1); // [y1, y2, y3, y4]
+                inv_2 = _mm_loadu_ps(padded + y*padded_width + x+2); // [y2, y3, y4, y5]
 
                 // multiply
                 inv_0 = _mm_mul_ps(kv_0, inv_0);
@@ -184,7 +189,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                 inv_2 = _mm_mul_ps(kv_2, inv_2);
 
                 // load corresponding output block we'll sum with; all 3 input blocks sum to same output block
-                outv_0 = _mm_loadu_ps(out + y*data_size_X + x);
+                outv_0 = _mm_loadu_ps(out + (y-j)*data_size_X + x);
 
                 // sum
                 outv_0 = _mm_add_ps(inv_0, outv_0);
@@ -192,39 +197,10 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                 outv_0 = _mm_add_ps(inv_2, outv_0);
 
                 // store into output image array
-                _mm_storeu_ps(out + x + y*data_size_X, outv_0);
+                _mm_storeu_ps(out + (y-j)*data_size_X + x, outv_0);
                 
+                // still need to handle remaining tail when (data_size_X % STRIDE) != 0
             }
-            // re-initialize sum
-            cur_sum = 0;
-            __m128 sum_v = _mm_setzero_ps();
-
-            //
-
-            // current input block vectorized; last column of will be 0s when multiplied by kernel
-            __m128 inv_a = _mm_loadu_ps(padded + x + y*pad_width);
-            __m128 inv_b = _mm_loadu_ps(padded + x + (y+1)*pad_width);
-            __m128 inv_c = _mm_loadu_ps(padded + x + (y+2)*pad_width);
-
-            // multiply kernel with current input block
-            inv_a = _mm_mul_ps(kv_a, inv_a);
-            inv_b = _mm_mul_ps(kv_b, inv_b);
-            inv_c = _mm_mul_ps(kv_c, inv_c);
-
-            // summing
-            sum_v = _mm_add_ps(inv_a, sum_v);
-            sum_v = _mm_add_ps(inv_b, sum_v);
-            sum_v = _mm_add_ps(inv_c, sum_v);
-
-            float sum_arr[4] = {0,0,0,0};
-            _mm_storeu_ps(sum_arr, sum_v);
-
-            for (int i = 0; i < 3; i++) {
-                cur_sum += sum_arr[i];
-            }
-
-            // store into out matrix
-            out[x+y*data_size_X] = cur_sum;
 		}
 	}
 
