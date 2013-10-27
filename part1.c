@@ -64,7 +64,7 @@ void unPad(array2d padded, array2d out, int pad_size) {
 void printArray(array2d array) {
     for (int y = 0; y < array.height; y++) {
         for (int x = 0; x < array.width; x++) {
-            printf("%f, ", array.array[x + y*array.width]);
+            printf("%.2f, ", array.array[x + y*array.width]);
         }
         printf("\n");
     }
@@ -162,7 +162,7 @@ _mm_store_ps(in_origin + 1 + data_size_Y,
     _mm_storeu_ps(out + (OFFSET) + (1-(KERN_COL)) +  ROW_OFFSET_##KERN_ROW, \
         _mm_add_ps( \
                 _mm_mul_ps( kv_##KERN_ROW##KERN_COL , (IN_VEC)), \
-                _mm_loadu_ps(in + (OFFSET) + (1-(KERN_COL)) + ROW_OFFSET_##KERN_ROW)))
+                _mm_loadu_ps(out + (OFFSET) + (1-(KERN_COL)) + ROW_OFFSET_##KERN_ROW)))
 
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
@@ -178,9 +178,6 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
      *
      * save the whole kernel in variables so we don't
      * do any memory access semantics for it
-     *
-     *
-     * this is kinda loop unrolling, and definitly register blocking
      *
      *      0  1  2
      *    ----------
@@ -218,11 +215,17 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     __m128 kv_c1 = _mm_load1_ps(&k_c1);
     __m128 kv_c2 = _mm_load1_ps(&k_c2);
 
+    // for debugging
+    array2d out2d;
+    out2d.array = out;
+    out2d.width = data_size_X;
+    out2d.height = data_size_Y;
+
     int y = 0;
     int x = 0;
     int start_of_row = 0;
 
-    int x_stride_max = (data_size_X/STRIDE)*STRIDE;
+    int x_stride_max = ((data_size_X-STRIDE)/STRIDE)*STRIDE;
     int offset;
 
     // current in-array 4-tuple
@@ -266,6 +269,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
         VECT_CONV(b, 0, in_v, offset);
     }
 
+
     // oh got this is gonna b slow
     // TODO: correct the overflow bug here
     for ( ; x < data_size_X-1; x++) {
@@ -283,6 +287,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
         out[offset - 1]               += in[offset] * k_b2;
     }
 
+
     // finally poke the last few values without overflow
     // cant do a0, b0, c0
     offset = data_size_X-1 + start_of_row;
@@ -291,6 +296,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
 
     out[offset - 1 + data_size_X] += in[offset] * k_a2;
     out[offset - 1]               += in[offset] * k_b2;
+
 
 
     /************************************************************************
