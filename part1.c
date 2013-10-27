@@ -4,6 +4,8 @@
 // string.h for memset
 #define KERNX 3 // this is the x-size of the kernel. It will always be odd.
 #define KERNY 3 // this is the y-size of the kernel. It will always be odd.
+#define STRIDE 4
+#define FLOOR_MULTIPLE( N, FACTOR ) (N)/(FACTOR)*(FACTOR)
 
 typedef struct {
     int width;
@@ -98,9 +100,7 @@ void test_array2d(int pad_size) {
     printArray(out);
 }
 
-int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
-                    float* kernel)
-{
+int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kernel){
     size_t float_size = sizeof(float);
     // the x coordinate of the kernel's center
     int kern_cent_X = (KERNX - 1)/2;
@@ -157,16 +157,13 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     float* padded = pad_2d.array;
     int padded_width = pad_2d.width;
 
-    
     __m128  kv_0, kv_1, kv_2,
             inv_0, inv_1, inv_2,
             outv_0;
             // later will need 6 inv and 2 outv if we want to do STRIDE 8
 
-#define STRIDE 4
-#define FLOOR_MULTIPLE( N, FACTOR ) (N)/(FACTOR)*(FACTOR)
-
     // main convolution loop
+    // avg 12.936 Gflops!!
     for (int j = 0; j < KERNY; j++){ // deal with one row of kernel at a time
         
         // load 4 copies of each column value in current kernel row into vectors
@@ -199,7 +196,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                 // store into output image array
                 _mm_storeu_ps(out + (y-j)*data_size_X + x, outv_0);
                 
-                // still need to handle remaining tail when (data_size_X % STRIDE) != 0
+                // still need to handle tail when (data_size_X % STRIDE) != 0
             }
 		}
 	}
