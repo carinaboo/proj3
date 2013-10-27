@@ -72,6 +72,7 @@ void printArray(array2d array) {
 
 // test the above functions on arrays
 void test_array2d(int pad_size) {
+
     float data[9] = {1,2,3,4,5,6,7,8,9};
     float res[9];
     array2d padded;
@@ -135,7 +136,33 @@ do_row(c, y)
 : D
 */
 
+// assumes float *in, float *out, data_size_X, data_size_Y
+// kernel vecs kv_[a-z][0-9]*
+// __mm128 inv input-array vector containing X+0 thru X+3 from this row
+// TODO write this after i figure out my prelude
+// #define DO_COLUMN( ROW, COLUMN, X) return X
 
+#define STRIDE 4
+/*// a0. x+1, y+1
+_mm_store_ps(in_origin + 1 + data_size_Y,
+        _mm_add_ps(
+            _mm_mul_ps(kv_a0, in_v),
+            _mm_load_ps(in_origin + 1 + data_size_Y)));
+            */
+
+// assumes data_size_Y
+// KERN_ROW is a,b,c
+// KERN_COL is 0,1,2
+// assumes *float in
+// assumes *float out
+#define ROW_OFFSET_a data_size_X
+#define ROW_OFFSET_b 0
+#define ROW_OFFSET_c (-data_size_X)
+#define VECT_CONV( KERN_ROW, KERN_COL, IN_VEC, OFFSET ) \
+    _mm_store_ps(out + (OFFSET) + (1-(KERN_COL)) +  ROW_OFFSET_##KERN_ROW, \
+        _mm_add_ps( \
+                _mm_mul_ps( kv_##KERN_ROW##KERN_COL , (IN_VEC)), \
+                _mm_load_ps(in + (OFFSET) + (1-(KERN_COL)) + ROW_OFFSET_##KERN_ROW)))
 
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
@@ -169,7 +196,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
           k_b0, k_b1, k_b2,
           k_c0, k_c1, k_c2;
 
-    // kernel un-flipped because why would you do that to me
+    // float kernel - for when we're outside of our stride
     k_a0 = *(kernel + 2 + 2*KERNX);
     k_a1 = *(kernel + 1 + 2*KERNX);
     k_a2 = *(kernel + 0 + 2*KERNX);
@@ -180,68 +207,251 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
     k_c1 = *(kernel + 1 + 0*KERNX);
     k_c2 = *(kernel + 0 + 0*KERNX);
 
-    // pad the array with a ring of zeroes so we don't have to stress about dis shiz
-    // using padding instead of ifs all over the place got us like ~1.5gflops
-    array2d in_2d;
-    in_2d.array = in;
-    in_2d.width = data_size_X;
-    in_2d.height = data_size_Y;
-    array2d pad_2d = zeroPad(in_2d, 1);
-    float* padded = pad_2d.array;
-    int pad_width = pad_2d.width;
+    // vector kernel - gotta go fast
+    __m128 kv_a0 = _mm_load1_ps(&k_a0);
+    __m128 kv_a1 = _mm_load1_ps(&k_a1);
+    __m128 kv_a2 = _mm_load1_ps(&k_a2);
+    __m128 kv_b0 = _mm_load1_ps(&k_b0);
+    __m128 kv_b1 = _mm_load1_ps(&k_b1);
+    __m128 kv_b2 = _mm_load1_ps(&k_b2);
+    __m128 kv_c0 = _mm_load1_ps(&k_c0);
+    __m128 kv_c1 = _mm_load1_ps(&k_c1);
+    __m128 kv_c2 = _mm_load1_ps(&k_c2);
+
+    int y = 0;
+    int x = 0;
+    int start_of_row = 0;
+
+    int x_stride_max = (data_size_X/STRIDE)*STRIDE;
+    int offset;
+
+    // current in-array 4-tuple
+    __m128 in_v;
+
+    /***********************************************************************
+     * Y = 0, do only kernel rows a and b, but NOT c
+     **********************************************************************/
+    y=0; // tears begin as we copy-paste the gen-purpose code
+    // first stride.
+    // its ok to do a0, a1
+    //              b0, b1
+    // with vectors,
+    // but a2, b2, c2 must be done iterativley with float calc
+    start_of_row = y*data_size_X;
+    offset = start_of_row;
+    in_v = _mm_loadu_ps(in+offset);
+
+    VECT_CONV(a, 1, in_v, offset);
+    VECT_CONV(a, 0, in_v, offset);
+
+    VECT_CONV(b, 1, in_v, offset);
+    VECT_CONV(b, 0, in_v, offset);
+
+    // potential optimization: do each in its own loop?
+    for (x = 1; x < STRIDE; x++) {
+        out[offset + x-1 + data_size_X] += in[offset + x] * k_a2;
+        out[offset + x-1]               += in[offset + x] * k_b2;
+    }
+
+    for(x = STRIDE; x < x_stride_max; x+=STRIDE){ // the x coordinate of the output location we're focusing on
+        offset = x + start_of_row;
+        in_v = _mm_loadu_ps(in+offset);
+
+        VECT_CONV(a, 2, in_v, offset);
+        VECT_CONV(a, 1, in_v, offset);
+        VECT_CONV(a, 0, in_v, offset);
+
+        VECT_CONV(b, 2, in_v, offset);
+        VECT_CONV(b, 1, in_v, offset);
+        VECT_CONV(b, 0, in_v, offset);
+    }
+
+    // oh got this is gonna b slow
+    // TODO: correct the overflow bug here
+    for ( ; x < data_size_X-1; x++) {
+        offset = x + start_of_row;
+
+        // god so naive
+        // why did i think this would be gud?
+        out[offset + 1 + data_size_X] += in[offset] * k_a0;
+        out[offset + 1]               += in[offset] * k_b0;
+
+        out[offset + data_size_X]     += in[offset] * k_a1;
+        out[offset]                   += in[offset] * k_b1;
+
+        out[offset - 1 + data_size_X] += in[offset] * k_a2;
+        out[offset - 1]               += in[offset] * k_b2;
+    }
+
+    // finally poke the last few values without overflow
+    // cant do a0, b0, c0
+    offset = data_size_X-1 + start_of_row;
+    out[offset + data_size_X]     += in[offset] * k_a1;
+    out[offset]                   += in[offset] * k_b1;
+
+    out[offset - 1 + data_size_X] += in[offset] * k_a2;
+    out[offset - 1]               += in[offset] * k_b2;
 
 
-    // accumulator so we don't access deep array memory every multiply.
-    float cur_sum = 0;
+    /************************************************************************
+     * Y: GENERAL CASE FOR MOST ROWS
+     ************************************************************************/
+    for(y = 1; y < data_size_Y-1; y++){ // the y coordinate of theoutput location we're focusing on
+        // first stride.
+        // its ok to do a0, a1
+        //              b0, b1
+        //              c0, c1
+        // with vectors,
+        // but a2, b2, c2 must be done iterativley with float calc
+        start_of_row = y*data_size_X;
+        offset = start_of_row;
+        in_v = _mm_loadu_ps(in+offset);
 
-    int ya, yb, yc; // y-1*width, y*width, y+1*width
-    
-    // main convolution loop
-    // reording y before x got us 4gflops
-    for(int y = 0; y < data_size_Y; y++){ // the y coordinate of theoutput location we're focusing on
-        for(int x = 0; x < data_size_X; x++){ // the x coordinate of the output location we're focusing on
-            // re-initialize sum
-            cur_sum = 0;
+        VECT_CONV(a, 1, in_v, offset);
+        VECT_CONV(a, 0, in_v, offset);
 
-            // maybe register blocking these will speed things up?
-            // it didn't
-            ya = (y) * pad_width;
-            yb = (y+1) * pad_width;
-            yc = (y+2) * pad_width;
+        VECT_CONV(b, 1, in_v, offset);
+        VECT_CONV(b, 0, in_v, offset);
 
-            // for now i'm not handling top/bottom/left/right errors
-            // because it's a lot of if statements
-            // also note that the kernel is NOT flipped -- woo doing intuitive things
-            cur_sum += padded[x   + ya] * k_a0;
-            cur_sum += padded[x+1 + ya] * k_a1;
-            cur_sum += padded[x+2 + ya] * k_a2;
+        VECT_CONV(c, 1, in_v, offset);
+        VECT_CONV(c, 0, in_v, offset);
 
-            cur_sum += padded[x   + yb] * k_b0;
-            cur_sum += padded[x+1 + yb] * k_b1;
-            cur_sum += padded[x+2 + yb] * k_b2;
+        // potential optimization: do each in its own loop?
+        for (x = 1; x < STRIDE; x++) {
+            out[offset + x-1 + data_size_X] += in[offset + x] * k_a2;
+            out[offset + x-1]               += in[offset + x] * k_b2;
+            out[offset + x-1 - data_size_X] += in[offset + x] * k_c2;
+        }
 
-            cur_sum += padded[x   + yc] * k_c0;
-            cur_sum += padded[x+1 + yc] * k_c1;
-            cur_sum += padded[x+2 + yc] * k_c2;
+        // gotta go fast.
+        // stride throught the array doing vector calculations left and right and up and down
+        // which might actually be slow, but we'll se about that!
+        for(x = STRIDE; x < x_stride_max; x+=STRIDE){ // the x coordinate of the output location we're focusing on
 
+            // get data
+            offset = x + start_of_row;
+            in_v = _mm_loadu_ps(in+offset);
 
-            // store into out matrix
-            out[x+y*data_size_X] = cur_sum;
-            /*
-			for(int i = -kern_cent_X; i <= kern_cent_X; i++){ // kernel unflipped x coordinate
-				for(int j = -kern_cent_Y; j <= kern_cent_Y; j++){ // kernel unflipped y coordinate
-					// only do the operation if not out of bounds
-					if(x+i>-1 && x+i<data_size_X && y+j>-1 && y+j<data_size_Y){
-						//Note that the kernel is flipped
-						out[x+y*data_size_X] += 
-								kernel[(kern_cent_X-i)+(kern_cent_Y-j)*KERNX] * in[(x+i) + (y+j)*data_size_X];
-					}
-				}
-			}*/
+            /* old way:
+            // a0. x+1, y+1
+            _mm_store_ps(in_origin + 1 + data_size_Y,
+                    _mm_add_ps(
+                        _mm_mul_ps(kv_a0, in_v),
+                        _mm_load_ps(in_origin + 1 + data_size_Y)));
+            */
+
+            // new way:
+            // VECT_CONV( KERN_ROW, KERN_COL, IN_VEC, ORIGIN )
+            VECT_CONV(a, 2, in_v, offset);
+            VECT_CONV(a, 1, in_v, offset);
+            VECT_CONV(a, 0, in_v, offset);
+
+            VECT_CONV(b, 2, in_v, offset);
+            VECT_CONV(b, 1, in_v, offset);
+            VECT_CONV(b, 0, in_v, offset);
+
+            VECT_CONV(c, 2, in_v, offset);
+            VECT_CONV(c, 1, in_v, offset);
+            VECT_CONV(c, 0, in_v, offset);
+        }
+
+        // oh got this is gonna b slow
+        // TODO: correct the overflow bug here
+        for ( ; x < data_size_X-1; x++) {
+            offset = x + start_of_row;
+
+            // god so naive
+            // why did i think this would be gud?
+            out[offset + 1 + data_size_X] += in[offset] * k_a0;
+            out[offset + 1]               += in[offset] * k_b0;
+            out[offset + 1 - data_size_X] += in[offset] * k_c0;
+
+            out[offset + data_size_X]     += in[offset] * k_a1;
+            out[offset]                   += in[offset] * k_b1;
+            out[offset - data_size_X]     += in[offset] * k_c1;
+
+            out[offset - 1 + data_size_X] += in[offset] * k_a2;
+            out[offset - 1]               += in[offset] * k_b2;
+            out[offset - 1 - data_size_X] += in[offset] * k_c2;
 		}
+
+        // finally poke the last few values without overflow
+        // cant do a0, b0, c0
+        offset = data_size_X-1 + start_of_row;
+        out[offset + data_size_X]     += in[offset] * k_a1;
+        out[offset]                   += in[offset] * k_b1;
+        out[offset - data_size_X]     += in[offset] * k_c1;
+
+        out[offset - 1 + data_size_X] += in[offset] * k_a2;
+        out[offset - 1]               += in[offset] * k_b2;
+        out[offset - 1 - data_size_X] += in[offset] * k_c2;
 	}
 
+    /**************************************************
+     * Y = data_size_Y - 1, do rows b and c, but NOT a
+     * more tears inbound now. */
+    y = data_size_Y-1;
+    // first stride.
+    // its ok to do a0, a1
+    //              b0, b1
+    //              c0, c1
+    // with vectors,
+    // but a2, b2, c2 must be done iterativley with float calc
+    start_of_row = y*data_size_X;
+    offset = start_of_row;
+    in_v = _mm_loadu_ps(in+offset);
+
+    VECT_CONV(b, 1, in_v, offset);
+    VECT_CONV(b, 0, in_v, offset);
+
+    VECT_CONV(c, 1, in_v, offset);
+    VECT_CONV(c, 0, in_v, offset);
+
+    for (x = 1; x < STRIDE; x++) {
+        out[offset + x-1]               += in[offset + x] * k_b2;
+        out[offset + x-1 - data_size_X] += in[offset + x] * k_c2;
+    }
+
+    // gotta go fast.
+    // stride throught the array doing vector calculations left and right and up and down
+    // which might actually be slow, but we'll se about that!
+    for(x = STRIDE; x < x_stride_max; x+=STRIDE){ // the x coordinate of the output location we're focusing on
+        offset = x + start_of_row;
+        in_v = _mm_loadu_ps(in+offset);
+
+        VECT_CONV(b, 2, in_v, offset);
+        VECT_CONV(b, 1, in_v, offset);
+        VECT_CONV(b, 0, in_v, offset);
+
+        VECT_CONV(c, 2, in_v, offset);
+        VECT_CONV(c, 1, in_v, offset);
+        VECT_CONV(c, 0, in_v, offset);
+    }
+
+    // oh got this is gonna b slow
+    // TODO: correct the overflow bug here
+    for ( ; x < data_size_X-1; x++) {
+        offset = x + start_of_row;
+
+        out[offset + 1]               += in[offset] * k_b0;
+        out[offset + 1 - data_size_X] += in[offset] * k_c0;
+
+        out[offset]                   += in[offset] * k_b1;
+        out[offset - data_size_X]     += in[offset] * k_c1;
+
+        out[offset - 1]               += in[offset] * k_b2;
+        out[offset - 1 - data_size_X] += in[offset] * k_c2;
+    }
+
+    // finally poke the last few values without overflow
+    // cant do a0, b0, c0
+    offset = data_size_X-1 + start_of_row;
+    out[offset]                   += in[offset] * k_b1;
+    out[offset - data_size_X]     += in[offset] * k_c1;
+
+    out[offset - 1]               += in[offset] * k_b2;
+    out[offset - 1 - data_size_X] += in[offset] * k_c2;
+
     // free the padded matrix
-    free(padded);
 	return 1;
 }
