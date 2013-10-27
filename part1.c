@@ -159,10 +159,10 @@ _mm_store_ps(in_origin + 1 + data_size_Y,
 #define ROW_OFFSET_b 0
 #define ROW_OFFSET_c (-data_size_X)
 #define VECT_CONV( KERN_ROW, KERN_COL, IN_VEC, OFFSET ) \
-    _mm_store_ps(out + (OFFSET) + (1-(KERN_COL)) +  ROW_OFFSET_##KERN_ROW, \
+    _mm_storeu_ps(out + (OFFSET) + (1-(KERN_COL)) +  ROW_OFFSET_##KERN_ROW, \
         _mm_add_ps( \
                 _mm_mul_ps( kv_##KERN_ROW##KERN_COL , (IN_VEC)), \
-                _mm_load_ps(in + (OFFSET) + (1-(KERN_COL)) + ROW_OFFSET_##KERN_ROW)))
+                _mm_loadu_ps(in + (OFFSET) + (1-(KERN_COL)) + ROW_OFFSET_##KERN_ROW)))
 
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y,
                     float* kernel)
