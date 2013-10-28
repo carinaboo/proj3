@@ -103,8 +103,10 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
     int x_max_stride = FLOOR_MULTIPLE(data_size_X, STRIDE);
     char needs_help  = (FLOOR_MULTIPLE(data_size_X, STRIDE) != data_size_X);
 
+
     // main convolution loop
     // avg 14 Gflops with STRIDE 8
+// #pragma omp parallel for
     for (int j = 0; j < KERNY; j++){ // deal with one row of kernel at a time
         
         // load 4 copies of each column value in current kernel row into vectors
@@ -115,31 +117,40 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
 #pragma omp parallel for
         for(int y = j; y < data_size_Y+j; y++){ // the row of padded input
             // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
-            int x = 0;
-            for( ; x < x_max_stride; x+=STRIDE){ // x coordinate of padded input
+// #pragma omp parallel for
+            for(int x = 0; x < x_max_stride; x+=STRIDE){ // x coordinate of padded input
+
+// the three steps of our algorithm, as macros for easily varying the step ammount
+#define LOAD( OFFSET ) \
+	__m128 outv_ ## OFFSET = _mm_loadu_ps(out + (y-j)*data_size_X + x+ (OFFSET))
+
+#define KERNEL_ROW( OFFSET, STORE_INTO )\
+	(STORE_INTO) = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+0 + (OFFSET))), (STORE_INTO));\
+	(STORE_INTO) = _mm_add_ps(_mm_mul_ps(kv_1, _mm_loadu_ps(padded + y*padded_width + x+1 + (OFFSET))), (STORE_INTO));\
+	(STORE_INTO) = _mm_add_ps(_mm_mul_ps(kv_2, _mm_loadu_ps(padded + y*padded_width + x+2 + (OFFSET))), (STORE_INTO))
+
+#define DO( OFFSET ) KERNEL_ROW( OFFSET, outv_ ## OFFSET )
+
+#define STORE( OFFSET ) \
+	_mm_storeu_ps(out + (y-j)*data_size_X + x + (OFFSET), outv_ ## OFFSET)
+	
 
                 // load corresponding output block we'll sum with; all 3 input blocks sum to same output block
-                __m128 outv_0 = _mm_loadu_ps(out + (y-j)*data_size_X + x+0);
-                __m128 outv_4 = _mm_loadu_ps(out + (y-j)*data_size_X + x+4);
+				LOAD(0);
+				LOAD(4);
 
                 //  multiply and sum
-                outv_0 = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+0)), outv_0); // stride 4
-                outv_0 = _mm_add_ps(_mm_mul_ps(kv_1, _mm_loadu_ps(padded + y*padded_width + x+1)), outv_0);
-                outv_0 = _mm_add_ps(_mm_mul_ps(kv_2, _mm_loadu_ps(padded + y*padded_width + x+2)), outv_0);
-
-                outv_4 = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+4)), outv_4); // stride 8
-                outv_4 = _mm_add_ps(_mm_mul_ps(kv_1, _mm_loadu_ps(padded + y*padded_width + x+5)), outv_4);
-                outv_4 = _mm_add_ps(_mm_mul_ps(kv_2, _mm_loadu_ps(padded + y*padded_width + x+6)), outv_4);
-
+				DO(0);
+				DO(4);
 
                 // store into output image array
-                _mm_storeu_ps(out + (y-j)*data_size_X + x+0, outv_0);
-                _mm_storeu_ps(out + (y-j)*data_size_X + x+4, outv_4);
+				STORE(0);
+				STORE(4);
             }
 
             // handle tail when (data_size_X % STRIDE) != 0
             if (needs_help) {
-                for( ; x < data_size_X; x++) { 
+                for(int x = x_max_stride ; x < data_size_X; x++) { 
                     float *out_index = out + (y-j)*data_size_X + x;
                     *out_index += kernel_unflipped[j*KERNX + 0] * padded[y*padded_width + x+0];
                     *out_index += kernel_unflipped[j*KERNX + 1] * padded[y*padded_width + x+1];
