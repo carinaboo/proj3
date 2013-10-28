@@ -8,12 +8,6 @@
 #define STRIDE 8
 #define FLOOR_MULTIPLE( N, FACTOR ) (N)/(FACTOR)*(FACTOR)
 
-typedef struct {
-    int width;
-    int height;
-    float *array;
-} array2d;
-
 // SSE memcopy
 void memcopyFloats(float *dest, float *src, unsigned int count) {
     __m128 buf1, buf2;
@@ -29,92 +23,6 @@ void memcopyFloats(float *dest, float *src, unsigned int count) {
     }
 }
 
-// add some number of zeros as padding around a given strided-array
-// for a 3x3 kernel, the pad_size should be one
-// in general pad_size = max((KERNX - 1)/2, (KERNY - 1)/2);
-// note that we'll need to free whatever memory is in *padded elsewhere!
-array2d zeroPad(array2d in, int pad_size) {
-    array2d retval;
-    int pad_x = in.width + pad_size*2;
-    int pad_y = in.height + pad_size*2;
-
-    size_t p_arr_size = pad_x*pad_y*sizeof(float);
-    size_t line_size = in.width*sizeof(float);
-
-    float *padded = (float*) malloc(p_arr_size);
-
-    // zero out the whole dingus
-    memset(padded, 0, p_arr_size);
-
-    // copy the original data into the zero-padded array
-    for (int i = in.height-1; i != -1; i--) {
-        //     0,0      y                   x         
-        memcpy(padded + pad_x*(i+pad_size) + pad_size,
-                // 0,y
-                in.array + i*in.width, 
-                line_size);
-    }
-
-    retval.array = padded;
-    retval.width = pad_x;
-    retval.height = pad_y;
-
-    return retval;
-}
-
-// unpads padded.array by pad_size from all size
-// writes result into out.array (which should be *out from 
-// conv2d :)
-void unPad(array2d padded, array2d out, int pad_size) {
-    // copy data out of the zero-padded array
-    float *src = padded.array;
-    float *dst = out.array;
-    size_t line_size = out.width*sizeof(float);
-    for (int i = out.height-1; i != -1; i--) {
-        memcpy(dst + i*out.width,
-               src + padded.width*(i+pad_size) + pad_size,
-               line_size);
-    }
-}
-
-// tool for debugging zeroPad
-void printArray(array2d array) {
-    for (int y = 0; y < array.height; y++) {
-        for (int x = 0; x < array.width; x++) {
-            printf("%f, ", array.array[x + y*array.width]);
-        }
-        printf("\n");
-    }
-}
-
-// test the above functions on arrays
-void test_array2d(int pad_size) {
-    float data[9] = {1,2,3,4,5,6,7,8,9};
-    float res[9];
-    array2d padded;
-    array2d out;
-    array2d test;
-
-    test.array = data;
-    test.width = 3;
-    test.height = 3;
-
-    out.array = res;
-    out.width = 3;
-    out.height = 3;
-
-
-    printf("Original data\n");
-    printArray(test);
-
-    printf("Padded with %i 0s on each side\n", pad_size);
-    padded = zeroPad(test, pad_size);
-    printArray(padded);
-
-    printf("Padding removed!\n");
-    unPad(padded, out, pad_size);
-    printArray(out);
-}
 
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kernel){
     size_t float_size = sizeof(float);
@@ -213,13 +121,12 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
                 __m128 outv_0 = _mm_loadu_ps(out + (y-j)*data_size_X + x+0);
                 __m128 outv_4 = _mm_loadu_ps(out + (y-j)*data_size_X + x+4);
 
-                // multiply
-
-                // sum
-                outv_0 = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+0)), outv_0);
+                //  multiply and sum
+                outv_0 = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+0)), outv_0); // stride 4
                 outv_0 = _mm_add_ps(_mm_mul_ps(kv_1, _mm_loadu_ps(padded + y*padded_width + x+1)), outv_0);
                 outv_0 = _mm_add_ps(_mm_mul_ps(kv_2, _mm_loadu_ps(padded + y*padded_width + x+2)), outv_0);
-                outv_4 = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+4)), outv_4);
+
+                outv_4 = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+4)), outv_4); // stride 8
                 outv_4 = _mm_add_ps(_mm_mul_ps(kv_1, _mm_loadu_ps(padded + y*padded_width + x+5)), outv_4);
                 outv_4 = _mm_add_ps(_mm_mul_ps(kv_2, _mm_loadu_ps(padded + y*padded_width + x+6)), outv_4);
 
