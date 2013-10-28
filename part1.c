@@ -229,12 +229,14 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
             }
 
             // handle tail when (data_size_X % STRIDE) != 0
-            for(x++ ; x < data_size_X; x++) { 
-                float *out_index = out + (y-j)*data_size_X + x;
-                *out_index += kernel_unflipped[j*KERNX + 0] * padded[y*padded_width + x+0];
-                *out_index += kernel_unflipped[j*KERNX + 1] * padded[y*padded_width + x+1];
-                *out_index += kernel_unflipped[j*KERNX + 2] * padded[y*padded_width + x+2];
+            if (needs_help) {
+                for( ; x < data_size_X; x++) { 
+                    float *out_index = out + (y-j)*data_size_X + x;
+                    *out_index += kernel_unflipped[j*KERNX + 0] * padded[y*padded_width + x+0];
+                    *out_index += kernel_unflipped[j*KERNX + 1] * padded[y*padded_width + x+1];
+                    *out_index += kernel_unflipped[j*KERNX + 2] * padded[y*padded_width + x+2];
 
+                }
             }
 		}
 	}
