@@ -13,6 +13,21 @@ typedef struct {
     float *array;
 } array2d;
 
+// SSE memcopy
+void memcopyFloats(float *dest, float *src, unsigned int count) {
+    __m128 buf1, buf2;
+    int i;
+    for (i = 0; i < ((count >> 4) << 4); i+=8) {
+        buf1 = _mm_loadu_ps(src + i);
+        buf2 = _mm_loadu_ps(src + i + 4);
+        _mm_storeu_ps(dest + i, buf1);
+        _mm_storeu_ps(dest + i + 4, buf2);
+    }
+    for ( ; i < count; i++) {
+        dest[i] = src[i];
+    }
+}
+
 // add some number of zeros as padding around a given strided-array
 // for a 3x3 kernel, the pad_size should be one
 // in general pad_size = max((KERNX - 1)/2, (KERNY - 1)/2);
@@ -107,7 +122,52 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
     // the y coordinate of the kernel's center
     int kern_cent_Y = (KERNY - 1)/2;
 
-    /* assuming KERNX = 3 and KERNY = 3,
+    /**********************************************************************
+     * pad the input array
+     * *******************************************************************/
+    int padded_width = data_size_X + 2;
+    int padded_height = data_size_Y + 2;
+
+    size_t p_arr_size = padded_width*padded_height*sizeof(float);
+    float padded[padded_width*padded_height];
+
+    // zero top line
+    memset(padded, 0, sizeof(float)*padded_width);
+    // copy the original data into the zero-padded array
+    int y;
+    for (y = 0; y < ((data_size_Y >> 1) << 1); y+=2) {
+        // zero start of line
+        padded[(y+1)*padded_width] = 0;
+        memcopyFloats(padded + 1 + (y+1)*padded_width,
+                in+ y*data_size_X,
+                data_size_X);      // y + pad_width, hwich is 1 for kernel size
+        // zero end of line
+        padded[(y+1)*padded_width + (padded_width -1)] = 0;
+
+        // zero start of line
+        padded[(y+2)*padded_width] = 0;
+        memcopyFloats(padded + 1 + (y+1+1)*padded_width,
+                in + (y+1)*data_size_X,
+                data_size_X);
+        // zero end of line
+        padded[(y+2)*padded_width + (padded_width -1)] = 0;
+    }
+    for (; y < data_size_Y; y++) {
+        // zero start of line
+        padded[(y+1)*padded_width] = 0;
+        memcopyFloats(padded + 1 + (y+1)*padded_width,
+                in+ y*data_size_X,
+                data_size_X);
+        // zero end of line
+        padded[(y+1)*padded_width + (padded_width -1)] = 0;
+    }
+    // zero last line
+    memset(padded + (padded_height-1)*padded_width, 0, sizeof(float)*padded_width);
+
+
+    /********************************************************************
+     * Do a convolution
+     * assuming KERNX = 3 and KERNY = 3,
      * we can create something defined in KERNX and KERNY using C preprocessor
      *
      * save the whole kernel in variables so we don't
@@ -123,46 +183,19 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
      * c  |  |  |  |
      *    ----------
      */
-
-    // kernel
-    /*
-    float k_a0, k_a1, k_a2, 
-          k_b0, k_b1, k_b2,
-          k_c0, k_c1, k_c2;
-
-    k_a0 = *(kernel + 2 + 2*KERNX);
-    k_a1 = *(kernel + 1 + 2*KERNX);
-    k_a2 = *(kernel + 0 + 2*KERNX);
-    k_b0 = *(kernel + 2 + 1*KERNX);
-    k_b1 = *(kernel + 1 + 1*KERNX);
-    k_b2 = *(kernel + 0 + 1*KERNX);
-    k_c0 = *(kernel + 2 + 0*KERNX);
-    k_c1 = *(kernel + 1 + 0*KERNX);
-    k_c2 = *(kernel + 0 + 0*KERNX);
-    
-    float kernel_unflipped[9] = {k_a0, k_a1, k_a2,
-                                 k_b0, k_b1, k_b2,
-                                 k_c0, k_c1, k_c2,};
-    */
     
     // hardcoded unflipped kernel array, fix later
     float kernel_unflipped[9] = {kernel[8], kernel[7], kernel[6], kernel[5], kernel[4], kernel[3], kernel[2], kernel[1], kernel[0]};
 
-    // pad the array with a ring of zeroes so we don't have to stress about dis shiz
-    array2d in_2d;
-    in_2d.array = in;
-    in_2d.width = data_size_X;
-    in_2d.height = data_size_Y;
-    array2d pad_2d = zeroPad(in_2d, 1);
-    float* padded = pad_2d.array;
-    int padded_width = pad_2d.width;
+    __m128  kv_0, kv_1, kv_2;
+            // inv_0, inv_1, inv_2, inv_4, inv_5, inv_6,
+            // outv_0, outv_4;
 
-    __m128  kv_0, kv_1, kv_2,
-            inv_0, inv_1, inv_2, inv_4, inv_5, inv_6,
-            outv_0, outv_4;
+    int x_max_stride = FLOOR_MULTIPLE(data_size_X, STRIDE);
+    char needs_help  = (FLOOR_MULTIPLE(data_size_X, STRIDE) != data_size_X);
 
     // main convolution loop
-    // avg 13 Gflops with STRIDE 8
+    // avg 14 Gflops with STRIDE 8
     for (int j = 0; j < KERNY; j++){ // deal with one row of kernel at a time
         
         // load 4 copies of each column value in current kernel row into vectors
@@ -172,35 +205,27 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
 
         for(int y = j; y < data_size_Y+j; y++){ // the row of padded input
             // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
-            for(int x = 0; x < FLOOR_MULTIPLE(data_size_X,STRIDE); x+=STRIDE){ // x coordinate of padded input
+            int x = 0;
+            for( ; x < x_max_stride; x+=STRIDE){ // x coordinate of padded input
 
                 // load corresponding input block we'll be multiplying with
-                inv_0 = _mm_loadu_ps(padded + y*padded_width + x+0); // [y0, y1, y2, y3]
-                inv_1 = _mm_loadu_ps(padded + y*padded_width + x+1); // [y1, y2, y3, y4]
-                inv_2 = _mm_loadu_ps(padded + y*padded_width + x+2); // [y2, y3, y4, y5]
-                inv_4 = _mm_loadu_ps(padded + y*padded_width + x+4); // [y4, y5, y6, y7]
-                inv_5 = _mm_loadu_ps(padded + y*padded_width + x+5); // [y5, y6, y7, y8]
-                inv_6 = _mm_loadu_ps(padded + y*padded_width + x+6); // [y6, y7, y8, y9]
-
-                // multiply
-                inv_0 = _mm_mul_ps(kv_0, inv_0);
-                inv_1 = _mm_mul_ps(kv_1, inv_1);
-                inv_2 = _mm_mul_ps(kv_2, inv_2);
-                inv_4 = _mm_mul_ps(kv_0, inv_4);
-                inv_5 = _mm_mul_ps(kv_1, inv_5);
-                inv_6 = _mm_mul_ps(kv_2, inv_6);
+                /*__m128 inv_7 = _mm_loadu_ps(padded + y*padded_width + x+4); // stride 12*/
+                /*__m128 inv_8 = _mm_loadu_ps(padded + y*padded_width + x+5); */
+                /*__m128 inv_9 = _mm_loadu_ps(padded + y*padded_width + x+6); */
 
                 // load corresponding output block we'll sum with; all 3 input blocks sum to same output block
-                outv_0 = _mm_loadu_ps(out + (y-j)*data_size_X + x+0);
-                outv_4 = _mm_loadu_ps(out + (y-j)*data_size_X + x+4);
+                __m128 outv_0 = _mm_loadu_ps(out + (y-j)*data_size_X + x+0);
+                __m128 outv_4 = _mm_loadu_ps(out + (y-j)*data_size_X + x+4);
+
+                // multiply
 
                 // sum
-                outv_0 = _mm_add_ps(inv_0, outv_0);
-                outv_0 = _mm_add_ps(inv_1, outv_0);
-                outv_0 = _mm_add_ps(inv_2, outv_0);
-                outv_4 = _mm_add_ps(inv_4, outv_4);
-                outv_4 = _mm_add_ps(inv_5, outv_4);
-                outv_4 = _mm_add_ps(inv_6, outv_4);
+                outv_0 = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+0)), outv_0);
+                outv_0 = _mm_add_ps(_mm_mul_ps(kv_1, _mm_loadu_ps(padded + y*padded_width + x+1)), outv_0);
+                outv_0 = _mm_add_ps(_mm_mul_ps(kv_2, _mm_loadu_ps(padded + y*padded_width + x+2)), outv_0);
+                outv_4 = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+4)), outv_4);
+                outv_4 = _mm_add_ps(_mm_mul_ps(kv_1, _mm_loadu_ps(padded + y*padded_width + x+5)), outv_4);
+                outv_4 = _mm_add_ps(_mm_mul_ps(kv_2, _mm_loadu_ps(padded + y*padded_width + x+6)), outv_4);
 
                 // store into output image array
                 _mm_storeu_ps(out + (y-j)*data_size_X + x+0, outv_0);
@@ -209,22 +234,15 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
             }
 
             // handle tail when (data_size_X % STRIDE) != 0
-            int tail_width = data_size_X % STRIDE;
+            for(x++ ; x < data_size_X; x++) { 
+                float *out_index = out + (y-j)*data_size_X + x;
+                *out_index += kernel_unflipped[j*KERNX + 0] * padded[y*padded_width + x+0];
+                *out_index += kernel_unflipped[j*KERNX + 1] * padded[y*padded_width + x+1];
+                *out_index += kernel_unflipped[j*KERNX + 2] * padded[y*padded_width + x+2];
 
-            if (tail_width != 0) {
-                for(int x = FLOOR_MULTIPLE(data_size_X,STRIDE); x < data_size_X; x++) { 
-
-                    float *out_index = out + (y-j)*data_size_X + x;
-                    *out_index += kernel_unflipped[j*KERNX + 0] * padded[y*padded_width + x+0];
-                    *out_index += kernel_unflipped[j*KERNX + 1] * padded[y*padded_width + x+1];
-                    *out_index += kernel_unflipped[j*KERNX + 2] * padded[y*padded_width + x+2];
-
-                }
             }
 		}
 	}
 
-    // free the padded matrix
-    free(padded);
 	return 1;
 }
