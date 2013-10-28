@@ -112,6 +112,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
         kv_1 = _mm_load1_ps(kernel_unflipped + j*KERNX + 1); // [j1, j1, j1, j1]
         kv_2 = _mm_load1_ps(kernel_unflipped + j*KERNX + 2); // [j2, j2, j2, j2]
 
+#pragma omp parallel for
         for(int y = j; y < data_size_Y+j; y++){ // the row of padded input
             // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
             int x = 0;
