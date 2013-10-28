@@ -208,11 +208,6 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
             int x = 0;
             for( ; x < x_max_stride; x+=STRIDE){ // x coordinate of padded input
 
-                // load corresponding input block we'll be multiplying with
-                /*__m128 inv_7 = _mm_loadu_ps(padded + y*padded_width + x+4); // stride 12*/
-                /*__m128 inv_8 = _mm_loadu_ps(padded + y*padded_width + x+5); */
-                /*__m128 inv_9 = _mm_loadu_ps(padded + y*padded_width + x+6); */
-
                 // load corresponding output block we'll sum with; all 3 input blocks sum to same output block
                 __m128 outv_0 = _mm_loadu_ps(out + (y-j)*data_size_X + x+0);
                 __m128 outv_4 = _mm_loadu_ps(out + (y-j)*data_size_X + x+4);
@@ -227,10 +222,10 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
                 outv_4 = _mm_add_ps(_mm_mul_ps(kv_1, _mm_loadu_ps(padded + y*padded_width + x+5)), outv_4);
                 outv_4 = _mm_add_ps(_mm_mul_ps(kv_2, _mm_loadu_ps(padded + y*padded_width + x+6)), outv_4);
 
+
                 // store into output image array
                 _mm_storeu_ps(out + (y-j)*data_size_X + x+0, outv_0);
                 _mm_storeu_ps(out + (y-j)*data_size_X + x+4, outv_4);
-                
             }
 
             // handle tail when (data_size_X % STRIDE) != 0
