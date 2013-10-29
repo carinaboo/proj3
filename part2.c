@@ -88,7 +88,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
     for (y = 0; y < ((data_size_Y >> 1) << 1); y+=2) {
         // zero start of line
         padded[(y+1)*padded_width] = 0;
-        memcopyFloats(padded + 1 + (y+1)*padded_width,
+        memcopyFloat(padded + 1 + (y+1)*padded_width,
                 in+ y*data_size_X,
                 data_size_X);      // y + pad_width, hwich is 1 for kernel size
         // zero end of line
@@ -96,7 +96,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
 
         // zero start of line
         padded[(y+2)*padded_width] = 0;
-        memcopyFloats(padded + 1 + (y+1+1)*padded_width,
+        memcopyFloat(padded + 1 + (y+1+1)*padded_width,
                 in + (y+1)*data_size_X,
                 data_size_X);
         // zero end of line
@@ -105,7 +105,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
     for (; y < data_size_Y; y++) {
         // zero start of line
         padded[(y+1)*padded_width] = 0;
-        memcopyFloats(padded + 1 + (y+1)*padded_width,
+        memcopyFloat(padded + 1 + (y+1)*padded_width,
                 in+ y*data_size_X,
                 data_size_X);
         // zero end of line
