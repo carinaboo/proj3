@@ -110,12 +110,19 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
     for (int j = 0; j < KERNY; j++){ // deal with one row of kernel at a time
         
         // load 4 copies of each column value in current kernel row into vectors
+        int k0 = *(kernel_unflipped + j*KERNX + 0); // for tail
+        int k1 = *(kernel_unflipped + j*KERNX + 1);
+        int k2 = *(kernel_unflipped + j*KERNX + 2);
         kv_0 = _mm_load1_ps(kernel_unflipped + j*KERNX + 0); // [j0, j0, j0, j0]
         kv_1 = _mm_load1_ps(kernel_unflipped + j*KERNX + 1); // [j1, j1, j1, j1]
         kv_2 = _mm_load1_ps(kernel_unflipped + j*KERNX + 2); // [j2, j2, j2, j2]
 
+
         // avg 25-27 gflops with STRIDE 8 and no thread limit
         #pragma omp parallel for
+        /*default(none) shared( j, kv_0, kv_1, kv_2, k0, k1, k2, \*/
+                /*x_max_stride, data_size_X, data_size_Y, \*/
+                /*out, padded, padded_width, needs_help)*/
         for(int y = j; y < data_size_Y+j; y++){ // the row of padded input
             // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
 //          #pragma omp parallel for
@@ -153,9 +160,9 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
             if (needs_help) {
                 for(int x = x_max_stride ; x < data_size_X; x++) { 
                     float *out_index = out + (y-j)*data_size_X + x;
-                    *out_index += kernel_unflipped[j*KERNX + 0] * padded[y*padded_width + x+0];
-                    *out_index += kernel_unflipped[j*KERNX + 1] * padded[y*padded_width + x+1];
-                    *out_index += kernel_unflipped[j*KERNX + 2] * padded[y*padded_width + x+2];
+                    *out_index += k0 * padded[y*padded_width + x+0];
+                    *out_index += k1 * padded[y*padded_width + x+1];
+                    *out_index += k2 * padded[y*padded_width + x+2];
 
                 }
             }
