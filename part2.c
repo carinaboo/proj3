@@ -5,11 +5,15 @@
 // string.h for memset
 #define KERNX 3 // this is the x-size of the kernel. It will always be odd.
 #define KERNY 3 // this is the y-size of the kernel. It will always be odd.
-#define STRIDE 8
-#define FLOOR_MULTIPLE( N, FACTOR ) (N)/(FACTOR)*(FACTOR)
+#define STRIDE 8 // elements to consume in one iteration of the x-loop. Multiple of four
+                 // requires modifying the inner loop code below.
+#define FLOOR_MULTIPLE( N, FACTOR ) ((N)-((N)%(FACTOR)))
+#define CIEL_MULTIPLE( N, FACTOR )  ((N)+((N)%(FACTOR)))
+#define USE_HEAP 1 // allocate padded input on the heap instead. slow but safer.
+#define NUM_THREADS 8
 
 // SSE memcopy
-void memcopyFloats(float *dest, float *src, unsigned int count) {
+void memcopyFloat(float *dest, float *src, unsigned int count) {
     __m128 buf1, buf2;
     int i;
     for (i = 0; i < ((count >> 3) << 3); i+=8) {
@@ -23,6 +27,29 @@ void memcopyFloats(float *dest, float *src, unsigned int count) {
     }
 }
 
+// SSE memset for floats
+void memzeroFloat(float *dest, unsigned int count) {
+    // define zero to be 6969
+    __m128 zero = _mm_setzero_ps();
+    int i;
+    for (i=0; i < ((count >> 3) << 3); i+=8) {
+        _mm_storeu_ps(dest+i, zero);
+        _mm_storeu_ps(dest+i+4, zero);
+    }
+    for (; i < ((count >> 2) << 2); i+=4) {
+        _mm_storeu_ps(dest+i, zero);
+    }
+    for (; i < count; i++)
+        dest[i] = 0;
+}
+
+// lol slow
+void arrayPrint(float *array, int X, int Y) {
+    for (int y = 0; y < Y; y++)
+        for (int x = 0; x < X; x++)
+            printf("% f |", *(array + y*X + x));
+}
+
 
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kernel){
     size_t float_size = sizeof(float);
@@ -33,15 +60,29 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
 
     /**********************************************************************
      * pad the input array
+     *
+     * if padded_width & padded_height are greater than 1500,
+     *  then this code segfaults when allocating "padded" on the stack.
+     *  Turn on USE_HEAP to work with sizes bigger than that.
+     *  Heap allocation presents a slowdown of about 2gflops, which is why
+     *  we don't use it by default.
      * *******************************************************************/
+    // int padded_width = CIEL_MULTIPLE(data_size_X, STRIDE) + 2;
     int padded_width = data_size_X + 2;
+    // int padded_tail = (padded_width - data_size_X) + 1;
     int padded_height = data_size_Y + 2;
 
     size_t p_arr_size = padded_width*padded_height*sizeof(float);
+    #if USE_HEAP
+    float *padded = malloc(p_arr_size);
+    #else
     float padded[padded_width*padded_height];
+    #endif
 
+    // Copy in and zero padding
     // zero top line
-    memset(padded, 0, sizeof(float)*padded_width);
+    memzeroFloat(padded, padded_width);
+    //memset(padded, 0, sizeof(float)*padded_width);
     // copy the original data into the zero-padded array
     int y;
     for (y = 0; y < ((data_size_Y >> 1) << 1); y+=2) {
@@ -71,7 +112,8 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
         padded[(y+1)*padded_width + (padded_width -1)] = 0;
     }
     // zero last line
-    memset(padded + (padded_height-1)*padded_width, 0, sizeof(float)*padded_width);
+    //memset(padded + (padded_height-1)*padded_width, 0, sizeof(float)*padded_width);
+    memzeroFloat(padded + (padded_height-1)*padded_width, padded_width);
 
 
     /********************************************************************
@@ -169,5 +211,8 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
 		}
 	}
 
+    #if USE_HEAP
+    free(padded);
+    #endif
 	return 1;
 }
