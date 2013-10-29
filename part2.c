@@ -12,7 +12,7 @@
 void memcopyFloats(float *dest, float *src, unsigned int count) {
     __m128 buf1, buf2;
     int i;
-    for (i = 0; i < ((count >> 4) << 4); i+=8) {
+    for (i = 0; i < ((count >> 3) << 3); i+=8) {
         buf1 = _mm_loadu_ps(src + i);
         buf2 = _mm_loadu_ps(src + i + 4);
         _mm_storeu_ps(dest + i, buf1);
@@ -114,38 +114,39 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
         kv_1 = _mm_load1_ps(kernel_unflipped + j*KERNX + 1); // [j1, j1, j1, j1]
         kv_2 = _mm_load1_ps(kernel_unflipped + j*KERNX + 2); // [j2, j2, j2, j2]
 
-#pragma omp parallel for
+        // avg 25-27 gflops with STRIDE 8 and no thread limit
+        #pragma omp parallel for
         for(int y = j; y < data_size_Y+j; y++){ // the row of padded input
             // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
-// #pragma omp parallel for
+//          #pragma omp parallel for
             for(int x = 0; x < x_max_stride; x+=STRIDE){ // x coordinate of padded input
 
-// the three steps of our algorithm, as macros for easily varying the step ammount
-#define LOAD( OFFSET ) \
-	__m128 outv_ ## OFFSET = _mm_loadu_ps(out + (y-j)*data_size_X + x+ (OFFSET))
+                // the three steps of our algorithm, as macros for easily varying the step ammount
+                #define LOAD( OFFSET ) \
+                    __m128 outv_ ## OFFSET = _mm_loadu_ps(out + (y-j)*data_size_X + x+ (OFFSET))
 
-#define KERNEL_ROW( OFFSET, STORE_INTO )\
-	(STORE_INTO) = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+0 + (OFFSET))), (STORE_INTO));\
-	(STORE_INTO) = _mm_add_ps(_mm_mul_ps(kv_1, _mm_loadu_ps(padded + y*padded_width + x+1 + (OFFSET))), (STORE_INTO));\
-	(STORE_INTO) = _mm_add_ps(_mm_mul_ps(kv_2, _mm_loadu_ps(padded + y*padded_width + x+2 + (OFFSET))), (STORE_INTO))
+                #define KERNEL_ROW( OFFSET, STORE_INTO )\
+                    (STORE_INTO) = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+0 + (OFFSET))), (STORE_INTO));\
+                    (STORE_INTO) = _mm_add_ps(_mm_mul_ps(kv_1, _mm_loadu_ps(padded + y*padded_width + x+1 + (OFFSET))), (STORE_INTO));\
+                    (STORE_INTO) = _mm_add_ps(_mm_mul_ps(kv_2, _mm_loadu_ps(padded + y*padded_width + x+2 + (OFFSET))), (STORE_INTO))
 
-#define DO( OFFSET ) KERNEL_ROW( OFFSET, outv_ ## OFFSET )
+                #define DO( OFFSET ) KERNEL_ROW( OFFSET, outv_ ## OFFSET )
 
-#define STORE( OFFSET ) \
-	_mm_storeu_ps(out + (y-j)*data_size_X + x + (OFFSET), outv_ ## OFFSET)
+                #define STORE( OFFSET ) \
+                    _mm_storeu_ps(out + (y-j)*data_size_X + x + (OFFSET), outv_ ## OFFSET)
 	
 
                 // load corresponding output block we'll sum with; all 3 input blocks sum to same output block
 				LOAD(0);
-				LOAD(4);
+                LOAD(4);
 
                 //  multiply and sum
 				DO(0);
-				DO(4);
+                DO(4);
 
                 // store into output image array
 				STORE(0);
-				STORE(4);
+                STORE(4);
             }
 
             // handle tail when (data_size_X % STRIDE) != 0
