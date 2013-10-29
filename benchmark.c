@@ -11,8 +11,8 @@ float kernel[] = { 0, -1, 0,
                    0, -1, 0 };
 
 // Range of the values to be tested.
-int minimum = 32, maximum = 401, step = 92;
-//int minimum = 400, maximum = 1201, step = 200;
+//int minimum = 32, maximum = 401, step = 92;
+int minimum = 400, maximum = 1201, step = 200;
 
 
 //=============================================================================================
