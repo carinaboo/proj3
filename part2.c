@@ -109,28 +109,12 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
     int x_max_stride = FLOOR_MULTIPLE(data_size_X, STRIDE);
     char needs_help  = (FLOOR_MULTIPLE(data_size_X, STRIDE) != data_size_X);
 
-
-    // main convolution loop
-    // avg 14 Gflops with STRIDE 8
-// #pragma omp parallel for
-
     // start y index in input image for each row of kernel
     int start[3] = {0,0,1};
     int end[3] = {data_size_Y-1, data_size_Y, data_size_Y};
 
-
-    // printf("kernel\n");
-    // arrayPrint(kernel_unflipped,KERNX,KERNY);
-    // printf("\n");
-
-    // printf("in\n");
-    // arrayPrint(in,data_size_X,data_size_Y);
-    // printf("\n");
-
-    // printf("padded\n");
-    // arrayPrint(padded,padded_width,padded_height);
-    // printf("\n");
-
+    // main convolution loop
+    // avg 14 Gflops with STRIDE 8
     for (int j = 0; j < KERNY; j++){ // deal with one row of kernel at a time
         
         // load 4 copies of each column value in current kernel row into vectors
@@ -143,10 +127,6 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
         
         // avg 25-27 gflops with STRIDE 8 and no thread limit
         #pragma omp parallel for
-        /*default(none) shared( j, kv_0, kv_1, kv_2, k0, k1, k2, \*/
-                /*x_max_stride, data_size_X, data_size_Y, \*/
-                /*out, padded, padded_width, needs_help)*/
-        // printf("===== KERNEL ROW = %d =====\n",j);
         for(int y = start[j]; y < end[j]; y++){ // the row of padded input
             // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
             // #pragma omp parallel for
@@ -165,7 +145,6 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
 
                 #define STORE( OFFSET ) \
                     _mm_storeu_ps(out + (y-(j-1))*data_size_X + x + (OFFSET), outv_ ## OFFSET)
-	
 
                 // load corresponding output block we'll sum with; all 3 input blocks sum to same output block
 				LOAD(0);
@@ -180,8 +159,6 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
                 STORE(4);
             }
 
-            // printf("Y=%d\n",y);
-            
             // handle tail when (data_size_X % STRIDE) != 0
             if (needs_help) {
                 for(int x = x_max_stride ; x < data_size_X; x++) { 
@@ -192,8 +169,6 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
                     *out_index += k2 * padded[y*padded_width + x+2];
                 }
             }
-            // arrayPrint(out,data_size_X,data_size_Y);
-            // printf("\n");
 		}
 	}
 
