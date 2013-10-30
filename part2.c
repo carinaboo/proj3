@@ -43,13 +43,14 @@ void memzeroFloat(float *dest, unsigned int count) {
         dest[i] = 0;
 }
 
-// lol slow
 void arrayPrint(float *array, int X, int Y) {
-    for (int y = 0; y < Y; y++)
+    for (int y = 0; y < Y; y++) {
+        printf("[ ");
         for (int x = 0; x < X; x++)
             printf("% f |", *(array + y*X + x));
+        printf(" ]\n");
+    }
 }
-
 
 int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kernel){
     size_t float_size = sizeof(float);
@@ -69,8 +70,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
      * *******************************************************************/
     // int padded_width = CIEL_MULTIPLE(data_size_X, STRIDE) + 2;
     int padded_width = data_size_X + 2;
-    // int padded_tail = (padded_width - data_size_X) + 1;
-    int padded_height = data_size_Y + 2;
+    int padded_height = data_size_Y;
 
     size_t p_arr_size = padded_width*padded_height*sizeof(float);
     #if USE_HEAP
@@ -79,42 +79,38 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
     float padded[padded_width*padded_height];
     #endif
 
-    // Copy in and zero padding
-    // zero top line
-    memzeroFloat(padded, padded_width);
-    //memset(padded, 0, sizeof(float)*padded_width);
     // copy the original data into the zero-padded array
-    int y;
-    for (y = 0; y < ((data_size_Y >> 1) << 1); y+=2) {
+    #pragma omp parallel for
+    for (int y = 0; y < ((data_size_Y >> 1) << 1); y+=2) {
         // zero start of line
-        padded[(y+1)*padded_width] = 0;
-        memcopyFloat(padded + 1 + (y+1)*padded_width,
+        padded[(y)*padded_width] = 0;
+        memcopyFloat(padded + 1 + y*padded_width,
                 in+ y*data_size_X,
                 data_size_X);      // y + pad_width, hwich is 1 for kernel size
         // zero end of line
-        padded[(y+1)*padded_width + (padded_width -1)] = 0;
+        padded[y*padded_width + (padded_width -1)] = 0;
 
-        // zero start of line
-        padded[(y+2)*padded_width] = 0;
-        memcopyFloat(padded + 1 + (y+1+1)*padded_width,
-                in + (y+1)*data_size_X,
-                data_size_X);
-        // zero end of line
-        padded[(y+2)*padded_width + (padded_width -1)] = 0;
-    }
-    for (; y < data_size_Y; y++) {
         // zero start of line
         padded[(y+1)*padded_width] = 0;
         memcopyFloat(padded + 1 + (y+1)*padded_width,
-                in+ y*data_size_X,
+                in + (y+1)*data_size_X,
                 data_size_X);
         // zero end of line
         padded[(y+1)*padded_width + (padded_width -1)] = 0;
     }
-    // zero last line
-    //memset(padded + (padded_height-1)*padded_width, 0, sizeof(float)*padded_width);
-    memzeroFloat(padded + (padded_height-1)*padded_width, padded_width);
+    if (data_size_Y % 2 != 0) {
+        int y = data_size_Y - 1; 
+        padded[y*padded_width] = 0;
+        memcopyFloat(padded + 1 + y*padded_width,
+                in+ y*data_size_X,
+                data_size_X);
+        // zero end of line
+        padded[y*padded_width + (padded_width -1)] = 0;
+    }
 
+    // arrayPrint(in,data_size_X,1);
+    // printf("\n");
+    // arrayPrint(padded,padded_width,1);
 
     /********************************************************************
      * Do a convolution
@@ -145,34 +141,32 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
     int x_max_stride = FLOOR_MULTIPLE(data_size_X, STRIDE);
     char needs_help  = (FLOOR_MULTIPLE(data_size_X, STRIDE) != data_size_X);
 
+    // start y index in input image for each row of kernel
+    int start[3] = {0,0,1};
+    int end[3] = {data_size_Y-1, data_size_Y, data_size_Y};
 
     // main convolution loop
     // avg 14 Gflops with STRIDE 8
-// #pragma omp parallel for
     for (int j = 0; j < KERNY; j++){ // deal with one row of kernel at a time
         
         // load 4 copies of each column value in current kernel row into vectors
-        int k0 = *(kernel_unflipped + j*KERNX + 0); // for tail
-        int k1 = *(kernel_unflipped + j*KERNX + 1);
-        int k2 = *(kernel_unflipped + j*KERNX + 2);
+        float k0 = *(kernel_unflipped + j*KERNX + 0); // for tail
+        float k1 = *(kernel_unflipped + j*KERNX + 1);
+        float k2 = *(kernel_unflipped + j*KERNX + 2);
         kv_0 = _mm_load1_ps(kernel_unflipped + j*KERNX + 0); // [j0, j0, j0, j0]
         kv_1 = _mm_load1_ps(kernel_unflipped + j*KERNX + 1); // [j1, j1, j1, j1]
         kv_2 = _mm_load1_ps(kernel_unflipped + j*KERNX + 2); // [j2, j2, j2, j2]
-
-
+        
         // avg 25-27 gflops with STRIDE 8 and no thread limit
         #pragma omp parallel for
-        /*default(none) shared( j, kv_0, kv_1, kv_2, k0, k1, k2, \*/
-                /*x_max_stride, data_size_X, data_size_Y, \*/
-                /*out, padded, padded_width, needs_help)*/
-        for(int y = j; y < data_size_Y+j; y++){ // the row of padded input
+        for(int y = start[j]; y < end[j]; y++){ // the row of padded input
             // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
-//          #pragma omp parallel for
+            // #pragma omp parallel for
             for(int x = 0; x < x_max_stride; x+=STRIDE){ // x coordinate of padded input
 
                 // the three steps of our algorithm, as macros for easily varying the step ammount
                 #define LOAD( OFFSET ) \
-                    __m128 outv_ ## OFFSET = _mm_loadu_ps(out + (y-j)*data_size_X + x+ (OFFSET))
+                    __m128 outv_ ## OFFSET = _mm_loadu_ps(out + (y-(j-1))*data_size_X + x+ (OFFSET))
 
                 #define KERNEL_ROW( OFFSET, STORE_INTO )\
                     (STORE_INTO) = _mm_add_ps(_mm_mul_ps(kv_0, _mm_loadu_ps(padded + y*padded_width + x+0 + (OFFSET))), (STORE_INTO));\
@@ -182,8 +176,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
                 #define DO( OFFSET ) KERNEL_ROW( OFFSET, outv_ ## OFFSET )
 
                 #define STORE( OFFSET ) \
-                    _mm_storeu_ps(out + (y-j)*data_size_X + x + (OFFSET), outv_ ## OFFSET)
-	
+                    _mm_storeu_ps(out + (y-(j-1))*data_size_X + x + (OFFSET), outv_ ## OFFSET)
 
                 // load corresponding output block we'll sum with; all 3 input blocks sum to same output block
 				LOAD(0);
@@ -201,11 +194,11 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
             // handle tail when (data_size_X % STRIDE) != 0
             if (needs_help) {
                 for(int x = x_max_stride ; x < data_size_X; x++) { 
-                    float *out_index = out + (y-j)*data_size_X + x;
+                    // printf("X=%d\n",x);
+                    float *out_index = out + (y-(j-1))*data_size_X + x;
                     *out_index += k0 * padded[y*padded_width + x+0];
                     *out_index += k1 * padded[y*padded_width + x+1];
                     *out_index += k2 * padded[y*padded_width + x+2];
-
                 }
             }
 		}
