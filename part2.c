@@ -9,7 +9,7 @@
                  // requires modifying the inner loop code below.
 #define FLOOR_MULTIPLE( N, FACTOR ) ((N)-((N)%(FACTOR)))
 #define CIEL_MULTIPLE( N, FACTOR )  ((N)+((N)%(FACTOR)))
-#define USE_HEAP 1 // allocate padded input on the heap instead. slow but safer.
+#define USE_HEAP 0 // allocate padded input on the heap instead. slow but safer.
 #define NUM_THREADS 8
 
 // SSE memcopy
