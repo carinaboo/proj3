@@ -62,7 +62,7 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
         // zero start of line
         padded[(y+1)*padded_width] = 0;
         memcopyFloats(padded + 1 + (y+1)*padded_width,
-                in + y*data_size_X,
+                in + (y+1)*data_size_X,
                 data_size_X);
         // zero end of line
         padded[(y+1)*padded_width + (padded_width -1)] = 0;
@@ -116,34 +116,40 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
 
     // start y index in input image for each row of kernel
     int start[3] = {0,0,1};
-    int end[3] = {data_size_Y-2, data_size_Y-1, data_size_Y-1};
+    int end[3] = {data_size_Y-1, data_size_Y, data_size_Y};
 
 
-    printf("kernel\n");
-    arrayPrint(kernel_unflipped,KERNX,3);
-    printf("\n");
+    // printf("kernel\n");
+    // arrayPrint(kernel_unflipped,KERNX,KERNY);
+    // printf("\n");
+
+    // printf("in\n");
+    // arrayPrint(in,data_size_X,data_size_Y);
+    // printf("\n");
+
+    // printf("padded\n");
+    // arrayPrint(padded,padded_width,padded_height);
+    // printf("\n");
 
     for (int j = 0; j < KERNY; j++){ // deal with one row of kernel at a time
         
         // load 4 copies of each column value in current kernel row into vectors
-        int k0 = *(kernel_unflipped + j*KERNX + 0); // for tail
-        int k1 = *(kernel_unflipped + j*KERNX + 1);
-        int k2 = *(kernel_unflipped + j*KERNX + 2);
+        float k0 = *(kernel_unflipped + j*KERNX + 0); // for tail
+        float k1 = *(kernel_unflipped + j*KERNX + 1);
+        float k2 = *(kernel_unflipped + j*KERNX + 2);
         kv_0 = _mm_load1_ps(kernel_unflipped + j*KERNX + 0); // [j0, j0, j0, j0]
         kv_1 = _mm_load1_ps(kernel_unflipped + j*KERNX + 1); // [j1, j1, j1, j1]
         kv_2 = _mm_load1_ps(kernel_unflipped + j*KERNX + 2); // [j2, j2, j2, j2]
-    
-        printf("in\n");
-        arrayPrint(in,data_size_X,2);
         
         // avg 25-27 gflops with STRIDE 8 and no thread limit
-        //#pragma omp parallel for
+        #pragma omp parallel for
         /*default(none) shared( j, kv_0, kv_1, kv_2, k0, k1, k2, \*/
                 /*x_max_stride, data_size_X, data_size_Y, \*/
                 /*out, padded, padded_width, needs_help)*/
+        // printf("===== KERNEL ROW = %d =====\n",j);
         for(int y = start[j]; y < end[j]; y++){ // the row of padded input
             // start y = kernel row, so 2nd kernel row isn't multiplied by 1st img row, and 3rd kernel row isn't multiplied by 1st or 2nd img row
-//          #pragma omp parallel for
+            // #pragma omp parallel for
             for(int x = 0; x < x_max_stride; x+=STRIDE){ // x coordinate of padded input
 
                 // the three steps of our algorithm, as macros for easily varying the step ammount
@@ -174,21 +180,21 @@ int conv2D(float* in, float* out, int data_size_X, int data_size_Y, float* kerne
                 STORE(4);
             }
 
+            // printf("Y=%d\n",y);
+            
             // handle tail when (data_size_X % STRIDE) != 0
             if (needs_help) {
                 for(int x = x_max_stride ; x < data_size_X; x++) { 
+                    // printf("X=%d\n",x);
                     float *out_index = out + (y-(j-1))*data_size_X + x;
                     *out_index += k0 * padded[y*padded_width + x+0];
                     *out_index += k1 * padded[y*padded_width + x+1];
                     *out_index += k2 * padded[y*padded_width + x+2];
-
                 }
             }
+            // arrayPrint(out,data_size_X,data_size_Y);
+            // printf("\n");
 		}
-
-        printf("out\n");
-        arrayPrint(out,data_size_X,1);
-        printf("\n");
 	}
 
 	return 1;
